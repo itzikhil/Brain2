@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+python-telegram-bot
+httpx
+psycopg2-binary
+pgvector
+google-generativeai
+python-multipart
