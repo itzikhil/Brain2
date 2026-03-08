@@ -4,6 +4,7 @@ from typing import Optional
 from uuid import UUID
 
 from app.services.gemini import GeminiService
+from app.services.logger import log_event
 
 
 class MemoryService:
@@ -20,33 +21,74 @@ class MemoryService:
         metadata: dict = None
     ) -> dict:
         """Store a memory with embedding."""
-        embedding = await self.gemini.generate_embedding(content)
+        await log_event(
+            "memory",
+            f"Storing memory: '{content[:50]}...'",
+            "pending",
+            user_id=user_id,
+            metadata={"category": category, "source": source}
+        )
 
-        query = text("""
-            INSERT INTO memories (user_id, content, category, embedding, source, metadata)
-            VALUES (:user_id, :content, :category, :embedding, :source, :metadata)
-            RETURNING id, created_at
-        """)
+        try:
+            embedding = await self.gemini.generate_embedding(content)
+            await log_event(
+                "embedding",
+                f"Memory vector created: {len(embedding)}d",
+                "success",
+                user_id=user_id
+            )
+        except Exception as e:
+            await log_event(
+                "embedding",
+                f"Memory embedding failed: {str(e)[:100]}",
+                "error",
+                user_id=user_id
+            )
+            raise
 
-        result = await self.db.execute(query, {
-            "user_id": user_id,
-            "content": content,
-            "category": category,
-            "embedding": str(embedding),
-            "source": source,
-            "metadata": str(metadata or {})
-        })
+        try:
+            query = text("""
+                INSERT INTO memories (user_id, content, category, embedding, source, metadata)
+                VALUES (:user_id, :content, :category, :embedding, :source, :metadata)
+                RETURNING id, created_at
+            """)
 
-        row = result.fetchone()
-        await self.db.commit()
+            result = await self.db.execute(query, {
+                "user_id": user_id,
+                "content": content,
+                "category": category,
+                "embedding": str(embedding),
+                "source": source,
+                "metadata": str(metadata or {})
+            })
 
-        return {
-            "id": str(row[0]),
-            "content": content,
-            "category": category,
-            "source": source,
-            "created_at": row[1]
-        }
+            row = result.fetchone()
+            await self.db.commit()
+
+            memory_id = str(row[0])
+            await log_event(
+                "memory",
+                f"Memory saved: {memory_id[:8]}...",
+                "success",
+                user_id=user_id,
+                metadata={"category": category}
+            )
+
+            return {
+                "id": memory_id,
+                "content": content,
+                "category": category,
+                "source": source,
+                "created_at": row[1]
+            }
+        except Exception as e:
+            await log_event(
+                "memory",
+                f"Memory save failed: {str(e)[:100]}",
+                "error",
+                user_id=user_id
+            )
+            raise
 
     async def search_memories(
         self,
@@ -56,6 +98,13 @@ class MemoryService:
         category: Optional[str] = None
     ) -> list[dict]:
         """Search memories using vector similarity."""
+        await log_event(
+            "search",
+            f"Memory search: '{query[:50]}'",
+            "info",
+            user_id=user_id
+        )
+
         query_embedding = await self.gemini.generate_query_embedding(query)
 
         if category:
@@ -93,6 +142,13 @@ class MemoryService:
         result = await self.db.execute(search_query, params)
         rows = result.fetchall()
 
+        await log_event(
+            "search",
+            f"Found {len(rows)} memories",
+            "success",
+            user_id=user_id
+        )
+
         return [
             {
                 "id": str(row[0]),
@@ -112,6 +168,13 @@ class MemoryService:
         limit: int = 5
     ) -> dict:
         """Search both documents and memories, return combined results with AI answer."""
+        await log_event(
+            "search",
+            f"Associative search: '{query[:50]}'",
+            "info",
+            user_id=user_id
+        )
+
         query_embedding = await self.gemini.generate_query_embedding(query)
 
         # Search documents
@@ -183,10 +246,26 @@ class MemoryService:
         all_results.sort(key=lambda x: x["similarity"], reverse=True)
         top_results = all_results[:limit]
 
+        await log_event(
+            "search",
+            f"Associative search complete: {len(doc_rows)} docs, {len(mem_rows)} memories",
+            "success",
+            user_id=user_id,
+            metadata={"top_similarity": top_results[0]["similarity"] if top_results else 0}
+        )
+
         # Generate AI answer if we have context
         answer = None
         if top_results:
-            answer = await self.gemini.answer_with_context(query, top_results)
+            try:
+                answer = await self.gemini.answer_with_context(query, top_results)
+            except Exception as e:
+                await log_event(
+                    "error",
+                    f"AI answer generation failed: {str(e)[:100]}",
+                    "error",
+                    user_id=user_id
+                )
 
         return {
             "query": query,
@@ -209,4 +288,13 @@ class MemoryService:
 
         deleted = result.fetchone() is not None
         await self.db.commit()
+
+        if deleted:
+            await log_event(
+                "memory",
+                f"Memory deleted: {str(memory_id)[:8]}...",
+                "info",
+                user_id=user_id
+            )
+
         return deleted
