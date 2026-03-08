@@ -393,7 +393,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "error"
         )
 
-        await update.message.reply_text(f"Error processing image: {str(e)[:100]}")
+        # DEBUG: Show actual error to user temporarily
+        await update.message.reply_text(f"DEBUG Photo Error: {error_msg}\n\nTraceback: {traceback.format_exc()[:300]}")
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -470,7 +471,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "error"
         )
 
-        await update.message.reply_text(f"Error processing document: {str(e)[:100]}")
+        # DEBUG: Show actual error to user temporarily
+        await update.message.reply_text(f"DEBUG Doc Error: {error_msg}\n\nTraceback: {traceback.format_exc()[:300]}")
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -525,7 +527,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "error"
         )
 
-        await update.message.reply_text("Error processing your message. Please try again.")
+        # DEBUG: Show actual error to user temporarily
+        await update.message.reply_text(f"DEBUG Error: {error_msg}\n\nTraceback: {traceback.format_exc()[:300]}")
 
 
 def create_bot_application() -> Application:

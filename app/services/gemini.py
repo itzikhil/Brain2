@@ -1,17 +1,30 @@
+import logging
 import google.generativeai as genai
 from typing import Optional
 import base64
-import numpy as np
 
 from app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class GeminiService:
     def __init__(self):
         settings = get_settings()
-        genai.configure(api_key=settings.gemini_api_key)
+
+        # Validate API key
+        api_key = settings.gemini_api_key
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY is not set!")
+        if api_key.startswith("[") or api_key == "your_gemini_api_key_here":
+            raise ValueError(f"GEMINI_API_KEY appears to be a placeholder: {api_key[:20]}...")
+
+        logger.info(f"Initializing Gemini with API key: {api_key[:10]}...")
+        genai.configure(api_key=api_key)
+
         self.vision_model = genai.GenerativeModel("gemini-2.0-flash")
         self.embedding_model = "models/gemini-embedding-001"
+        logger.info("GeminiService initialized successfully")
 
     def _detect_mime_type(self, file_bytes: bytes) -> str:
         """Detect MIME type from file magic bytes."""

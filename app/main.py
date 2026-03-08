@@ -7,6 +7,7 @@ from telegram import Update
 
 from app.config import get_settings
 from app.bot import create_bot_application
+from app.database import init_db
 from app.routers import documents, shopping, memory
 
 # Configure logging
@@ -27,13 +28,24 @@ async def lifespan(app: FastAPI):
     logger.info("Starting External Brain...")
 
     try:
+        # Initialize database tables if needed
+        logger.info("Checking database tables...")
+        await init_db()
+
+        # Verify Gemini API key
+        settings = get_settings()
+        if not settings.gemini_api_key or settings.gemini_api_key.startswith("["):
+            logger.error("GEMINI_API_KEY is not set or invalid!")
+        else:
+            logger.info(f"GEMINI_API_KEY configured: {settings.gemini_api_key[:10]}...")
+
         # Initialize bot
         bot_app = create_bot_application()
         await bot_app.initialize()
         await bot_app.start()
         logger.info("External Brain started successfully")
     except Exception as e:
-        logger.error(f"Failed to initialize bot: {e}")
+        logger.error(f"Failed to initialize: {e}")
         # We don't raise here so the /health endpoint can still respond 
         # to tell us the service is technically "up" even if the bot is broken.
 
