@@ -1,74 +1,21 @@
+"""
+External Brain - FastAPI Application
+Health check is defined FIRST with zero dependencies.
+"""
 import logging
-import asyncio
 
-from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse
-from telegram import Update
-
-from app.config import get_settings
-
-# Configure logging
+# Configure logging FIRST
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Lazy-initialized globals
-_bot_app = None
-_init_lock = asyncio.Lock()
-_initialized = False
+# Import ONLY FastAPI - nothing else at top level
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
 
-
-async def ensure_initialized():
-    """Lazy initialization of bot and database on first request."""
-    global _bot_app, _initialized
-
-    if _initialized:
-        return _bot_app
-
-    async with _init_lock:
-        # Double-check after acquiring lock
-        if _initialized:
-            return _bot_app
-
-        logger.info("Lazy initialization starting...")
-
-        try:
-            # Initialize database tables if needed
-            from app.database import init_db
-            logger.info("Checking database tables...")
-            await init_db()
-            logger.info("Database initialized")
-
-            # Verify Gemini API key
-            settings = get_settings()
-            if not settings.gemini_api_key or settings.gemini_api_key.startswith("["):
-                logger.error("GEMINI_API_KEY is not set or invalid!")
-            else:
-                logger.info(f"GEMINI_API_KEY configured: {settings.gemini_api_key[:10]}...")
-
-            # Initialize bot
-            from app.bot import create_bot_application
-            _bot_app = create_bot_application()
-            await _bot_app.initialize()
-            await _bot_app.start()
-            logger.info("Bot initialized successfully")
-
-            _initialized = True
-            logger.info("Lazy initialization complete")
-
-        except Exception as e:
-            logger.error(f"Initialization error: {e}")
-            import traceback
-            traceback.print_exc()
-            # Don't set _initialized = True, so we retry next time
-            raise
-
-    return _bot_app
-
-
-# Create FastAPI app - NO lifespan handler to avoid blocking startup
+# Create app immediately
 app = FastAPI(
     title="External Brain",
     description="Personal knowledge management with OCR, vector search, and Telegram integration",
@@ -76,42 +23,112 @@ app = FastAPI(
 )
 
 
-# Health check - completely decoupled, no dependencies
+# =============================================================================
+# HEALTH CHECK - MUST BE FIRST, ZERO DEPENDENCIES
+# =============================================================================
 @app.get("/health")
 async def health_check():
-    """Critical endpoint for Railway to verify the service is live."""
+    """Railway health check - returns immediately, no dependencies."""
     return {"status": "ok"}
 
 
 @app.get("/")
 async def root():
     """Root endpoint."""
-    return {
-        "name": "External Brain",
-        "version": "1.0.0",
-        "status": "ready",
-        "endpoints": {"health": "/health", "webhook": "/webhook/telegram"}
-    }
+    return {"name": "External Brain", "version": "1.0.0", "status": "ready"}
 
 
+# =============================================================================
+# LAZY INITIALIZATION - All imports inside functions
+# =============================================================================
+_bot_app = None
+_initialized = False
+_init_error = None
+
+
+async def ensure_initialized():
+    """Lazy initialization - all imports happen here, not at module load."""
+    global _bot_app, _initialized, _init_error
+
+    if _initialized:
+        return _bot_app
+
+    if _init_error:
+        raise _init_error
+
+    import asyncio
+    lock = asyncio.Lock()
+
+    async with lock:
+        if _initialized:
+            return _bot_app
+
+        logger.info("=== LAZY INITIALIZATION STARTING ===")
+
+        try:
+            # Import config
+            logger.info("Loading config...")
+            from app.config import get_settings
+            settings = get_settings()
+            logger.info("Config loaded")
+
+            # Import and init database
+            logger.info("Initializing database...")
+            from app.database import init_db
+            await init_db()
+            logger.info("Database initialized")
+
+            # Verify Gemini
+            if not settings.gemini_api_key or settings.gemini_api_key.startswith("["):
+                logger.warning("GEMINI_API_KEY may be invalid")
+            else:
+                logger.info(f"GEMINI_API_KEY: {settings.gemini_api_key[:10]}...")
+
+            # Import and init bot
+            logger.info("Creating bot application...")
+            from app.bot import create_bot_application
+            _bot_app = create_bot_application()
+            await _bot_app.initialize()
+            await _bot_app.start()
+            logger.info("Bot started")
+
+            _initialized = True
+            logger.info("=== INITIALIZATION COMPLETE ===")
+
+        except Exception as e:
+            logger.error(f"=== INITIALIZATION FAILED: {e} ===")
+            import traceback
+            traceback.print_exc()
+            _init_error = e
+            raise
+
+    return _bot_app
+
+
+# =============================================================================
+# WEBHOOK ENDPOINTS
+# =============================================================================
 @app.post("/webhook/telegram")
 async def telegram_webhook(request: Request):
-    """Telegram webhook endpoint - triggers lazy initialization."""
-    settings = get_settings()
-
-    # Validate secret token first (doesn't need initialization)
-    secret_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-    if secret_token != settings.telegram_webhook_secret:
-        logger.warning("Webhook request with invalid or missing secret token")
-        return JSONResponse(status_code=403, content={"error": "Forbidden"})
-
+    """Telegram webhook - triggers lazy init on first request."""
     try:
-        # Lazy init on first webhook
+        # Import config here to avoid top-level import issues
+        from app.config import get_settings
+        settings = get_settings()
+
+        # Validate token first
+        secret_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+        if secret_token != settings.telegram_webhook_secret:
+            logger.warning("Invalid webhook secret token")
+            return JSONResponse(status_code=403, content={"error": "Forbidden"})
+
+        # Lazy init
         bot_app = await ensure_initialized()
-
         if not bot_app:
-            return JSONResponse(status_code=503, content={"error": "Bot initialization failed"})
+            return JSONResponse(status_code=503, content={"error": "Bot not ready"})
 
+        # Process update
+        from telegram import Update
         data = await request.json()
         update = Update.de_json(data, bot_app.bot)
         await bot_app.process_update(update)
@@ -128,11 +145,12 @@ async def telegram_webhook(request: Request):
 async def set_webhook(webhook_url: str):
     """Set Telegram webhook URL."""
     try:
-        bot_app = await ensure_initialized()
+        from app.config import get_settings
         settings = get_settings()
 
+        bot_app = await ensure_initialized()
         if not bot_app:
-            return JSONResponse(status_code=503, content={"error": "Bot not initialized"})
+            return JSONResponse(status_code=503, content={"error": "Bot not ready"})
 
         await bot_app.bot.set_webhook(
             url=f"{webhook_url}/webhook/telegram",
@@ -150,12 +168,20 @@ async def status():
     """Check initialization status."""
     return {
         "initialized": _initialized,
-        "bot_ready": _bot_app is not None
+        "bot_ready": _bot_app is not None,
+        "error": str(_init_error) if _init_error else None
     }
 
 
-# Include routers (they handle their own lazy DB connections)
-from app.routers import documents, shopping, memory
-app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
-app.include_router(shopping.router, prefix="/api/shopping", tags=["Shopping"])
-app.include_router(memory.router, prefix="/api/memory", tags=["Memory"])
+# =============================================================================
+# ROUTERS - Wrapped in try/except to prevent crash
+# =============================================================================
+try:
+    from app.routers import documents, shopping, memory
+    app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
+    app.include_router(shopping.router, prefix="/api/shopping", tags=["Shopping"])
+    app.include_router(memory.router, prefix="/api/memory", tags=["Memory"])
+    logger.info("API routers loaded")
+except Exception as e:
+    logger.error(f"Failed to load routers: {e}")
+    # App continues without API routes - health check still works
