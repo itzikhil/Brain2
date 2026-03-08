@@ -22,7 +22,7 @@ class UserService:
         """)
 
         result = await self.db.execute(query, {"telegram_id": telegram_id})
-        row = result.fetchone()
+        row = result.first()
 
         if row:
             return {
@@ -46,7 +46,7 @@ class UserService:
             "first_name": first_name
         })
 
-        row = result.fetchone()
+        row = result.first()
         await self.db.commit()
 
         return {
@@ -66,7 +66,7 @@ class UserService:
         """)
 
         result = await self.db.execute(query, {"user_id": user_id})
-        row = result.fetchone()
+        row = result.first()
 
         if row:
             return {"current_state": row[0], "context": row[1]}

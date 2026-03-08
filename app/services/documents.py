@@ -89,7 +89,7 @@ class DocumentService:
                 "metadata": f'{{"summary": "{ocr_result["summary"]}"}}'
             })
 
-            row = result.fetchone()
+            row = result.first()
             await self.db.commit()
 
             doc_id = str(row[0])
@@ -157,7 +157,7 @@ class DocumentService:
             "limit": limit
         })
 
-        rows = result.fetchall()
+        rows = result.all()
 
         await log_event(
             "search",
@@ -187,7 +187,7 @@ class DocumentService:
         """)
 
         result = await self.db.execute(query, {"id": document_id, "user_id": user_id})
-        row = result.fetchone()
+        row = result.first()
 
         if not row:
             return None

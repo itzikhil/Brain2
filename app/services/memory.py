@@ -62,7 +62,7 @@ class MemoryService:
                 "metadata": str(metadata or {})
             })
 
-            row = result.fetchone()
+            row = result.first()
             await self.db.commit()
 
             memory_id = str(row[0])
@@ -140,7 +140,7 @@ class MemoryService:
             }
 
         result = await self.db.execute(search_query, params)
-        rows = result.fetchall()
+        rows = result.all()
 
         await log_event(
             "search",
@@ -216,8 +216,8 @@ class MemoryService:
         doc_result = await self.db.execute(doc_query, params)
         mem_result = await self.db.execute(mem_query, params)
 
-        doc_rows = doc_result.fetchall()
-        mem_rows = mem_result.fetchall()
+        doc_rows = doc_result.all()
+        mem_rows = mem_result.all()
 
         # Combine and sort by similarity
         all_results = []
@@ -286,7 +286,7 @@ class MemoryService:
             "user_id": user_id
         })
 
-        deleted = result.fetchone() is not None
+        deleted = result.first() is not None
         await self.db.commit()
 
         if deleted:

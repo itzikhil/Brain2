@@ -19,7 +19,7 @@ class ShoppingService:
         """)
 
         result = await self.db.execute(query, {"user_id": user_id})
-        row = result.fetchone()
+        row = result.first()
 
         if row:
             return {"id": str(row[0]), "name": row[1], "created_at": row[2]}
@@ -32,7 +32,7 @@ class ShoppingService:
         """)
 
         result = await self.db.execute(create_query, {"user_id": user_id})
-        row = result.fetchone()
+        row = result.first()
         await self.db.commit()
 
         return {"id": str(row[0]), "name": row[1], "created_at": row[2]}
@@ -60,7 +60,7 @@ class ShoppingService:
             "unit": unit
         })
 
-        row = result.fetchone()
+        row = result.first()
         await self.db.commit()
 
         return {
@@ -85,7 +85,7 @@ class ShoppingService:
         """)
 
         result = await self.db.execute(query, {"list_id": shopping_list["id"]})
-        rows = result.fetchall()
+        rows = result.all()
 
         items = [
             {
@@ -121,7 +121,7 @@ class ShoppingService:
             "user_id": user_id
         })
 
-        if not result.fetchone():
+        if not result.first():
             return None
 
         update_query = text("""
@@ -132,7 +132,7 @@ class ShoppingService:
         """)
 
         result = await self.db.execute(update_query, {"item_id": item_id})
-        row = result.fetchone()
+        row = result.first()
         await self.db.commit()
 
         return {"id": str(row[0]), "item_name": row[1], "is_checked": row[2]}
@@ -153,7 +153,7 @@ class ShoppingService:
             "user_id": user_id
         })
 
-        deleted = result.fetchone() is not None
+        deleted = result.first() is not None
         await self.db.commit()
         return deleted
 
@@ -167,7 +167,7 @@ class ShoppingService:
         """)
 
         result = await self.db.execute(query, {"user_id": user_id})
-        row = result.fetchone()
+        row = result.first()
         await self.db.commit()
 
         if not row:
@@ -191,7 +191,7 @@ class ShoppingService:
         """)
 
         result = await self.db.execute(query, {"list_id": shopping_list["id"]})
-        deleted_count = len(result.fetchall())
+        deleted_count = len(result.all())
         await self.db.commit()
 
         return deleted_count
