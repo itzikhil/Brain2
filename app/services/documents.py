@@ -1,10 +1,15 @@
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text
+from sqlalchemy import select, insert, func
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from typing import Optional
 from uuid import UUID
 
+from app.models.orm import Document, User
 from app.services.gemini import GeminiService
 from app.services.logger import log_event
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentService:
@@ -66,33 +71,24 @@ class DocumentService:
             )
             raise
 
-        # Store in database
+        # Store in database using ORM
         try:
-            query = text("""
-                INSERT INTO documents (
-                    user_id, filename, original_text, translated_text,
-                    source_language, target_language, embedding, file_type, metadata
-                ) VALUES (
-                    :user_id, :filename, :original_text, :translated_text,
-                    'de', 'en', :embedding, :file_type, :metadata
-                )
-                RETURNING id, created_at
-            """)
+            new_doc = Document(
+                user_id=user_id,
+                filename=filename,
+                original_text=ocr_result["original_text"],
+                translated_text=ocr_result["translated_text"],
+                source_language="de",
+                target_language="en",
+                embedding=embedding,
+                file_type=ocr_result["document_type"],
+                metadata={"summary": ocr_result["summary"]}
+            )
+            self.db.add(new_doc)
+            await self.db.flush()
+            await self.db.refresh(new_doc)
 
-            result = await self.db.execute(query, {
-                "user_id": user_id,
-                "filename": filename,
-                "original_text": ocr_result["original_text"],
-                "translated_text": ocr_result["translated_text"],
-                "embedding": str(embedding),
-                "file_type": ocr_result["document_type"],
-                "metadata": f'{{"summary": "{ocr_result["summary"]}"}}'
-            })
-
-            row = result.first()
-            await self.db.commit()
-
-            doc_id = str(row[0])
+            doc_id = str(new_doc.id)
             await log_event(
                 "document",
                 f"Document saved: {doc_id[:8]}...",
@@ -110,7 +106,7 @@ class DocumentService:
                 "translated_text": ocr_result["translated_text"],
                 "document_type": ocr_result["document_type"],
                 "summary": ocr_result["summary"],
-                "created_at": row[1]
+                "created_at": new_doc.created_at
             }
         except Exception as e:
             await log_event(
@@ -137,26 +133,22 @@ class DocumentService:
 
         query_embedding = await self.gemini.generate_query_embedding(query)
 
-        search_query = text("""
-            SELECT
-                id,
-                original_text,
-                translated_text,
-                file_type,
-                metadata,
-                1 - (embedding <=> :embedding::vector) as similarity
-            FROM documents
-            WHERE user_id = :user_id
-            ORDER BY embedding <=> :embedding::vector
-            LIMIT :limit
-        """)
+        # Use SQLAlchemy with pgvector cosine distance
+        stmt = (
+            select(
+                Document.id,
+                Document.original_text,
+                Document.translated_text,
+                Document.file_type,
+                Document.metadata,
+                (1 - Document.embedding.cosine_distance(query_embedding)).label("similarity")
+            )
+            .where(Document.user_id == user_id)
+            .order_by(Document.embedding.cosine_distance(query_embedding))
+            .limit(limit)
+        )
 
-        result = await self.db.execute(search_query, {
-            "user_id": user_id,
-            "embedding": str(query_embedding),
-            "limit": limit
-        })
-
+        result = await self.db.execute(stmt)
         rows = result.all()
 
         await log_event(
@@ -168,35 +160,34 @@ class DocumentService:
 
         return [
             {
-                "id": str(row[0]),
-                "original_text": row[1],
-                "translated_text": row[2],
-                "document_type": row[3],
-                "metadata": row[4],
-                "similarity": float(row[5])
+                "id": str(row.id),
+                "original_text": row.original_text,
+                "translated_text": row.translated_text,
+                "document_type": row.file_type,
+                "metadata": row.metadata,
+                "similarity": float(row.similarity) if row.similarity else 0.0
             }
             for row in rows
         ]
 
     async def get_document(self, document_id: UUID, user_id: int) -> Optional[dict]:
         """Get a specific document."""
-        query = text("""
-            SELECT id, original_text, translated_text, file_type, metadata, created_at
-            FROM documents
-            WHERE id = :id AND user_id = :user_id
-        """)
+        stmt = (
+            select(Document)
+            .where(Document.id == document_id, Document.user_id == user_id)
+        )
 
-        result = await self.db.execute(query, {"id": document_id, "user_id": user_id})
-        row = result.first()
+        result = await self.db.execute(stmt)
+        doc = result.scalar_one_or_none()
 
-        if not row:
+        if not doc:
             return None
 
         return {
-            "id": str(row[0]),
-            "original_text": row[1],
-            "translated_text": row[2],
-            "document_type": row[3],
-            "metadata": row[4],
-            "created_at": row[5]
+            "id": str(doc.id),
+            "original_text": doc.original_text,
+            "translated_text": doc.translated_text,
+            "document_type": doc.file_type,
+            "metadata": doc.metadata,
+            "created_at": doc.created_at
         }

@@ -1,6 +1,12 @@
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from typing import Optional
+
+from app.models.orm import User, ConversationState
+
+logger = logging.getLogger(__name__)
 
 
 class UserService:
@@ -15,61 +21,45 @@ class UserService:
     ) -> dict:
         """Get existing user or create new one."""
         # Try to get existing user
-        query = text("""
-            SELECT id, telegram_id, username, first_name, created_at
-            FROM users
-            WHERE telegram_id = :telegram_id
-        """)
+        stmt = select(User).where(User.telegram_id == telegram_id)
+        result = await self.db.execute(stmt)
+        user = result.scalar_one_or_none()
 
-        result = await self.db.execute(query, {"telegram_id": telegram_id})
-        row = result.first()
-
-        if row:
+        if user:
             return {
-                "id": row[0],
-                "telegram_id": row[1],
-                "username": row[2],
-                "first_name": row[3],
-                "created_at": row[4]
+                "id": user.id,
+                "telegram_id": user.telegram_id,
+                "username": user.username,
+                "first_name": user.first_name,
+                "created_at": user.created_at
             }
 
         # Create new user
-        create_query = text("""
-            INSERT INTO users (telegram_id, username, first_name)
-            VALUES (:telegram_id, :username, :first_name)
-            RETURNING id, telegram_id, username, first_name, created_at
-        """)
-
-        result = await self.db.execute(create_query, {
-            "telegram_id": telegram_id,
-            "username": username,
-            "first_name": first_name
-        })
-
-        row = result.first()
-        await self.db.commit()
+        new_user = User(
+            telegram_id=telegram_id,
+            username=username,
+            first_name=first_name
+        )
+        self.db.add(new_user)
+        await self.db.flush()
+        await self.db.refresh(new_user)
 
         return {
-            "id": row[0],
-            "telegram_id": row[1],
-            "username": row[2],
-            "first_name": row[3],
-            "created_at": row[4]
+            "id": new_user.id,
+            "telegram_id": new_user.telegram_id,
+            "username": new_user.username,
+            "first_name": new_user.first_name,
+            "created_at": new_user.created_at
         }
 
     async def get_conversation_state(self, user_id: int) -> dict:
         """Get user's conversation state."""
-        query = text("""
-            SELECT current_state, context
-            FROM conversation_states
-            WHERE user_id = :user_id
-        """)
+        stmt = select(ConversationState).where(ConversationState.user_id == user_id)
+        result = await self.db.execute(stmt)
+        state = result.scalar_one_or_none()
 
-        result = await self.db.execute(query, {"user_id": user_id})
-        row = result.first()
-
-        if row:
-            return {"current_state": row[0], "context": row[1]}
+        if state:
+            return {"current_state": state.current_state, "context": state.context}
 
         return {"current_state": "idle", "context": {}}
 
@@ -80,16 +70,17 @@ class UserService:
         context: dict = None
     ) -> None:
         """Set user's conversation state."""
-        query = text("""
-            INSERT INTO conversation_states (user_id, current_state, context)
-            VALUES (:user_id, :state, :context)
-            ON CONFLICT (user_id)
-            DO UPDATE SET current_state = :state, context = :context
-        """)
+        # Use PostgreSQL upsert (INSERT ... ON CONFLICT)
+        stmt = pg_insert(ConversationState).values(
+            user_id=user_id,
+            current_state=state,
+            context=context or {}
+        ).on_conflict_do_update(
+            index_elements=["user_id"],
+            set_={
+                "current_state": state,
+                "context": context or {}
+            }
+        )
 
-        await self.db.execute(query, {
-            "user_id": user_id,
-            "state": state,
-            "context": str(context or {})
-        })
-        await self.db.commit()
+        await self.db.execute(stmt)

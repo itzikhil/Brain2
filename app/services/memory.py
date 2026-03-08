@@ -1,10 +1,14 @@
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text
+from sqlalchemy import select, delete, literal
 from typing import Optional
 from uuid import UUID
 
+from app.models.orm import Memory, Document
 from app.services.gemini import GeminiService
 from app.services.logger import log_event
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryService:
@@ -47,25 +51,19 @@ class MemoryService:
             raise
 
         try:
-            query = text("""
-                INSERT INTO memories (user_id, content, category, embedding, source, metadata)
-                VALUES (:user_id, :content, :category, :embedding, :source, :metadata)
-                RETURNING id, created_at
-            """)
+            new_memory = Memory(
+                user_id=user_id,
+                content=content,
+                category=category,
+                embedding=embedding,
+                source=source,
+                metadata=metadata or {}
+            )
+            self.db.add(new_memory)
+            await self.db.flush()
+            await self.db.refresh(new_memory)
 
-            result = await self.db.execute(query, {
-                "user_id": user_id,
-                "content": content,
-                "category": category,
-                "embedding": str(embedding),
-                "source": source,
-                "metadata": str(metadata or {})
-            })
-
-            row = result.first()
-            await self.db.commit()
-
-            memory_id = str(row[0])
+            memory_id = str(new_memory.id)
             await log_event(
                 "memory",
                 f"Memory saved: {memory_id[:8]}...",
@@ -79,7 +77,7 @@ class MemoryService:
                 "content": content,
                 "category": category,
                 "source": source,
-                "created_at": row[1]
+                "created_at": new_memory.created_at
             }
         except Exception as e:
             await log_event(
@@ -107,39 +105,29 @@ class MemoryService:
 
         query_embedding = await self.gemini.generate_query_embedding(query)
 
-        if category:
-            search_query = text("""
-                SELECT
-                    id, content, category, source, metadata,
-                    1 - (embedding <=> :embedding::vector) as similarity
-                FROM memories
-                WHERE user_id = :user_id AND category = :category
-                ORDER BY embedding <=> :embedding::vector
-                LIMIT :limit
-            """)
-            params = {
-                "user_id": user_id,
-                "embedding": str(query_embedding),
-                "category": category,
-                "limit": limit
-            }
-        else:
-            search_query = text("""
-                SELECT
-                    id, content, category, source, metadata,
-                    1 - (embedding <=> :embedding::vector) as similarity
-                FROM memories
-                WHERE user_id = :user_id
-                ORDER BY embedding <=> :embedding::vector
-                LIMIT :limit
-            """)
-            params = {
-                "user_id": user_id,
-                "embedding": str(query_embedding),
-                "limit": limit
-            }
+        # Build SQLAlchemy query with pgvector cosine distance
+        stmt = (
+            select(
+                Memory.id,
+                Memory.content,
+                Memory.category,
+                Memory.source,
+                Memory.metadata,
+                (1 - Memory.embedding.cosine_distance(query_embedding)).label("similarity")
+            )
+            .where(Memory.user_id == user_id)
+        )
 
-        result = await self.db.execute(search_query, params)
+        if category:
+            stmt = stmt.where(Memory.category == category)
+
+        stmt = (
+            stmt
+            .order_by(Memory.embedding.cosine_distance(query_embedding))
+            .limit(limit)
+        )
+
+        result = await self.db.execute(stmt)
         rows = result.all()
 
         await log_event(
@@ -151,12 +139,12 @@ class MemoryService:
 
         return [
             {
-                "id": str(row[0]),
-                "content": row[1],
-                "category": row[2],
-                "source": row[3],
-                "metadata": row[4],
-                "similarity": float(row[5])
+                "id": str(row.id),
+                "content": row.content,
+                "category": row.category,
+                "source": row.source,
+                "metadata": row.metadata,
+                "similarity": float(row.similarity) if row.similarity else 0.0
             }
             for row in rows
         ]
@@ -177,44 +165,39 @@ class MemoryService:
 
         query_embedding = await self.gemini.generate_query_embedding(query)
 
-        # Search documents
-        doc_query = text("""
-            SELECT
-                'document' as source_type,
-                id,
-                COALESCE(translated_text, original_text) as content,
-                file_type as category,
-                metadata,
-                1 - (embedding <=> :embedding::vector) as similarity
-            FROM documents
-            WHERE user_id = :user_id
-            ORDER BY embedding <=> :embedding::vector
-            LIMIT :limit
-        """)
+        # Search documents using SQLAlchemy
+        doc_stmt = (
+            select(
+                literal("document").label("source_type"),
+                Document.id,
+                Document.translated_text,
+                Document.original_text,
+                Document.file_type.label("category"),
+                Document.metadata,
+                (1 - Document.embedding.cosine_distance(query_embedding)).label("similarity")
+            )
+            .where(Document.user_id == user_id)
+            .order_by(Document.embedding.cosine_distance(query_embedding))
+            .limit(limit)
+        )
 
-        # Search memories
-        mem_query = text("""
-            SELECT
-                'memory' as source_type,
-                id,
-                content,
-                category,
-                metadata,
-                1 - (embedding <=> :embedding::vector) as similarity
-            FROM memories
-            WHERE user_id = :user_id
-            ORDER BY embedding <=> :embedding::vector
-            LIMIT :limit
-        """)
+        # Search memories using SQLAlchemy
+        mem_stmt = (
+            select(
+                literal("memory").label("source_type"),
+                Memory.id,
+                Memory.content,
+                Memory.category,
+                Memory.metadata,
+                (1 - Memory.embedding.cosine_distance(query_embedding)).label("similarity")
+            )
+            .where(Memory.user_id == user_id)
+            .order_by(Memory.embedding.cosine_distance(query_embedding))
+            .limit(limit)
+        )
 
-        params = {
-            "user_id": user_id,
-            "embedding": str(query_embedding),
-            "limit": limit
-        }
-
-        doc_result = await self.db.execute(doc_query, params)
-        mem_result = await self.db.execute(mem_query, params)
+        doc_result = await self.db.execute(doc_stmt)
+        mem_result = await self.db.execute(mem_stmt)
 
         doc_rows = doc_result.all()
         mem_rows = mem_result.all()
@@ -223,23 +206,24 @@ class MemoryService:
         all_results = []
 
         for row in doc_rows:
+            content = row.translated_text or row.original_text
             all_results.append({
-                "source_type": row[0],
-                "id": str(row[1]),
-                "content": row[2],
-                "category": row[3],
-                "metadata": row[4],
-                "similarity": float(row[5])
+                "source_type": row.source_type,
+                "id": str(row.id),
+                "content": content,
+                "category": row.category,
+                "metadata": row.metadata,
+                "similarity": float(row.similarity) if row.similarity else 0.0
             })
 
         for row in mem_rows:
             all_results.append({
-                "source_type": row[0],
-                "id": str(row[1]),
-                "content": row[2],
-                "category": row[3],
-                "metadata": row[4],
-                "similarity": float(row[5])
+                "source_type": row.source_type,
+                "id": str(row.id),
+                "content": row.content,
+                "category": row.category,
+                "metadata": row.metadata,
+                "similarity": float(row.similarity) if row.similarity else 0.0
             })
 
         # Sort by similarity and take top results
@@ -275,19 +259,15 @@ class MemoryService:
 
     async def delete_memory(self, user_id: int, memory_id: UUID) -> bool:
         """Delete a memory."""
-        query = text("""
-            DELETE FROM memories
-            WHERE id = :id AND user_id = :user_id
-            RETURNING id
-        """)
+        stmt = (
+            delete(Memory)
+            .where(Memory.id == memory_id, Memory.user_id == user_id)
+            .returning(Memory.id)
+        )
 
-        result = await self.db.execute(query, {
-            "id": memory_id,
-            "user_id": user_id
-        })
-
-        deleted = result.first() is not None
-        await self.db.commit()
+        result = await self.db.execute(stmt)
+        deleted_row = result.first()
+        deleted = deleted_row is not None
 
         if deleted:
             await log_event(
