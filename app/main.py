@@ -1,14 +1,11 @@
 import logging
-from contextlib import asynccontextmanager
+import asyncio
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from telegram import Update
 
 from app.config import get_settings
-from app.bot import create_bot_application
-from app.database import init_db
-from app.routers import documents, shopping, memory
 
 # Configure logging
 logging.basicConfig(
@@ -17,106 +14,74 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Bot application (created at startup)
-bot_app = None
+# Lazy-initialized globals
+_bot_app = None
+_init_lock = asyncio.Lock()
+_initialized = False
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan handler."""
-    global bot_app
 
-    logger.info("Starting External Brain...")
+async def ensure_initialized():
+    """Lazy initialization of bot and database on first request."""
+    global _bot_app, _initialized
 
-    try:
-        # Initialize database tables if needed
-        logger.info("Checking database tables...")
-        await init_db()
+    if _initialized:
+        return _bot_app
 
-        # Verify Gemini API key
-        settings = get_settings()
-        if not settings.gemini_api_key or settings.gemini_api_key.startswith("["):
-            logger.error("GEMINI_API_KEY is not set or invalid!")
-        else:
-            logger.info(f"GEMINI_API_KEY configured: {settings.gemini_api_key[:10]}...")
+    async with _init_lock:
+        # Double-check after acquiring lock
+        if _initialized:
+            return _bot_app
 
-        # Initialize bot
-        bot_app = create_bot_application()
-        await bot_app.initialize()
-        await bot_app.start()
-        logger.info("External Brain started successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize: {e}")
-        # We don't raise here so the /health endpoint can still respond 
-        # to tell us the service is technically "up" even if the bot is broken.
+        logger.info("Lazy initialization starting...")
 
-    yield
+        try:
+            # Initialize database tables if needed
+            from app.database import init_db
+            logger.info("Checking database tables...")
+            await init_db()
+            logger.info("Database initialized")
 
-    # Shutdown
-    logger.info("Shutting down External Brain...")
-    if bot_app:
-        await bot_app.stop()
-        await bot_app.shutdown()
+            # Verify Gemini API key
+            settings = get_settings()
+            if not settings.gemini_api_key or settings.gemini_api_key.startswith("["):
+                logger.error("GEMINI_API_KEY is not set or invalid!")
+            else:
+                logger.info(f"GEMINI_API_KEY configured: {settings.gemini_api_key[:10]}...")
 
-# Create FastAPI app
+            # Initialize bot
+            from app.bot import create_bot_application
+            _bot_app = create_bot_application()
+            await _bot_app.initialize()
+            await _bot_app.start()
+            logger.info("Bot initialized successfully")
+
+            _initialized = True
+            logger.info("Lazy initialization complete")
+
+        except Exception as e:
+            logger.error(f"Initialization error: {e}")
+            import traceback
+            traceback.print_exc()
+            # Don't set _initialized = True, so we retry next time
+            raise
+
+    return _bot_app
+
+
+# Create FastAPI app - NO lifespan handler to avoid blocking startup
 app = FastAPI(
     title="External Brain",
     description="Personal knowledge management with OCR, vector search, and Telegram integration",
-    version="1.0.0",
-    lifespan=lifespan
+    version="1.0.0"
 )
 
-# 1. Health Check (Must be defined BEFORE other routes)
+
+# Health check - completely decoupled, no dependencies
 @app.get("/health")
 async def health_check():
     """Critical endpoint for Railway to verify the service is live."""
-    logger.info("Railway Health Check ping received")
-    return {"status": "healthy", "service": "external-brain"}
+    return {"status": "ok"}
 
-# Include routers
-app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
-app.include_router(shopping.router, prefix="/api/shopping", tags=["Shopping"])
-app.include_router(memory.router, prefix="/api/memory", tags=["Memory"])
-
-@app.post("/webhook/telegram")
-async def telegram_webhook(request: Request):
-    """Telegram webhook endpoint."""
-    global bot_app
-    settings = get_settings()
-
-    secret_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-    if secret_token != settings.telegram_webhook_secret:
-        logger.warning("Webhook request with invalid or missing secret token")
-        return JSONResponse(status_code=403, content={"error": "Forbidden"})
-
-    if not bot_app:
-        return JSONResponse(status_code=503, content={"error": "Bot not initialized"})
-
-    try:
-        data = await request.json()
-        update = Update.de_json(data, bot_app.bot)
-        await bot_app.process_update(update)
-        return Response(status_code=200)
-    except Exception as e:
-        logger.error(f"Webhook error: {e}")
-        return JSONResponse(status_code=500, content={"error": str(e)})
-
-@app.post("/webhook/set")
-async def set_webhook(webhook_url: str):
-    """Set Telegram webhook URL."""
-    global bot_app
-    settings = get_settings()
-
-    if not bot_app:
-        return JSONResponse(status_code=503, content={"error": "Bot not initialized"})
-
-    try:
-        await bot_app.bot.set_webhook(
-            url=f"{webhook_url}/webhook/telegram",
-            secret_token=settings.telegram_webhook_secret
-        )
-        return {"status": "success", "webhook_url": f"{webhook_url}/webhook/telegram"}
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.get("/")
 async def root():
@@ -124,5 +89,73 @@ async def root():
     return {
         "name": "External Brain",
         "version": "1.0.0",
-        "endpoints": {"health": "/health", "api": "/api"}
+        "status": "ready",
+        "endpoints": {"health": "/health", "webhook": "/webhook/telegram"}
     }
+
+
+@app.post("/webhook/telegram")
+async def telegram_webhook(request: Request):
+    """Telegram webhook endpoint - triggers lazy initialization."""
+    settings = get_settings()
+
+    # Validate secret token first (doesn't need initialization)
+    secret_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+    if secret_token != settings.telegram_webhook_secret:
+        logger.warning("Webhook request with invalid or missing secret token")
+        return JSONResponse(status_code=403, content={"error": "Forbidden"})
+
+    try:
+        # Lazy init on first webhook
+        bot_app = await ensure_initialized()
+
+        if not bot_app:
+            return JSONResponse(status_code=503, content={"error": "Bot initialization failed"})
+
+        data = await request.json()
+        update = Update.de_json(data, bot_app.bot)
+        await bot_app.process_update(update)
+        return Response(status_code=200)
+
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/webhook/set")
+async def set_webhook(webhook_url: str):
+    """Set Telegram webhook URL."""
+    try:
+        bot_app = await ensure_initialized()
+        settings = get_settings()
+
+        if not bot_app:
+            return JSONResponse(status_code=503, content={"error": "Bot not initialized"})
+
+        await bot_app.bot.set_webhook(
+            url=f"{webhook_url}/webhook/telegram",
+            secret_token=settings.telegram_webhook_secret
+        )
+        return {"status": "success", "webhook_url": f"{webhook_url}/webhook/telegram"}
+
+    except Exception as e:
+        logger.error(f"Set webhook error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/status")
+async def status():
+    """Check initialization status."""
+    return {
+        "initialized": _initialized,
+        "bot_ready": _bot_app is not None
+    }
+
+
+# Include routers (they handle their own lazy DB connections)
+from app.routers import documents, shopping, memory
+app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
+app.include_router(shopping.router, prefix="/api/shopping", tags=["Shopping"])
+app.include_router(memory.router, prefix="/api/memory", tags=["Memory"])

@@ -68,6 +68,12 @@ async def init_db():
     engine = get_engine()
 
     async with engine.begin() as conn:
+        # ALWAYS ensure extensions exist (safe to run multiple times)
+        logger.info("Ensuring required extensions...")
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+        await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp";'))
+        logger.info("Extensions ready")
+
         # Check if tables exist by querying for users table
         result = await conn.execute(text("""
             SELECT EXISTS (
@@ -80,10 +86,6 @@ async def init_db():
 
         if not tables_exist:
             logger.info("Tables not found. Running schema creation...")
-
-            # Create pgvector extension
-            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
-            await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp";'))
 
             # Create users table
             await conn.execute(text("""
