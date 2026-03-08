@@ -22,18 +22,29 @@ def get_engine():
     if _engine is None:
         settings = get_settings()
         db_url = settings.database_url
+
         # Ensure we're using asyncpg driver
         if db_url.startswith("postgresql://"):
             db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
         elif not db_url.startswith("postgresql+asyncpg://"):
             db_url = f"postgresql+asyncpg://{db_url.split('://', 1)[-1]}"
 
+        # Remove sslmode from URL - asyncpg handles SSL via connect_args
+        if "sslmode=" in db_url:
+            import re
+            db_url = re.sub(r'[?&]sslmode=[^&]*', '', db_url)
+            # Clean up any trailing ? or &
+            db_url = db_url.rstrip('?&')
+
+        logger.info(f"Creating engine with URL: {db_url[:50]}...")
+
         _engine = create_async_engine(
             db_url,
             echo=False,
             pool_pre_ping=True,
             pool_size=5,
-            max_overflow=10
+            max_overflow=10,
+            connect_args={"ssl": "require"}  # asyncpg SSL syntax
         )
     return _engine
 
