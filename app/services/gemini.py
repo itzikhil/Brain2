@@ -13,17 +13,33 @@ class GeminiService:
         self.vision_model = genai.GenerativeModel("gemini-2.0-flash")
         self.embedding_model = "models/gemini-embedding-001"
 
+    def _detect_mime_type(self, file_bytes: bytes) -> str:
+        """Detect MIME type from file magic bytes."""
+        if file_bytes[:4] == b'%PDF':
+            return "application/pdf"
+        elif file_bytes[:3] == b'\xff\xd8\xff':
+            return "image/jpeg"
+        elif file_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+            return "image/png"
+        elif file_bytes[:4] == b'RIFF' and file_bytes[8:12] == b'WEBP':
+            return "image/webp"
+        elif file_bytes[:3] == b'GIF':
+            return "image/gif"
+        else:
+            return "image/jpeg"  # Default fallback
+
     async def ocr_and_translate(
         self,
-        image_bytes: bytes,
+        file_bytes: bytes,
         source_lang: str = "German",
         target_lang: str = "English"
     ) -> dict:
-        """Extract text from image and translate it."""
-        image_data = base64.b64encode(image_bytes).decode("utf-8")
+        """Extract text from image/PDF and translate it."""
+        file_data = base64.b64encode(file_bytes).decode("utf-8")
+        mime_type = self._detect_mime_type(file_bytes)
 
-        prompt = f"""Analyze this image and perform the following:
-1. Extract ALL text visible in the image (OCR)
+        prompt = f"""Analyze this document and perform the following:
+1. Extract ALL text visible in the document (OCR)
 2. The document is in {source_lang}
 3. Translate the extracted text to {target_lang}
 4. Identify the document type (letter, invoice, form, receipt, etc.)
@@ -42,7 +58,7 @@ SUMMARY:
 [brief summary of what this document is about]"""
 
         response = await self.vision_model.generate_content_async([
-            {"mime_type": "image/jpeg", "data": image_data},
+            {"mime_type": mime_type, "data": file_data},
             prompt
         ])
 

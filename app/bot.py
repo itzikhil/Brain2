@@ -229,23 +229,71 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file = await context.bot.get_file(photo.file_id)
     image_bytes = await file.download_as_bytearray()
 
-    async with get_db_context() as db:
-        doc_service = DocumentService(db)
-        result = await doc_service.process_document(
-            user_id=user["id"],
-            image_bytes=bytes(image_bytes),
-            filename=f"telegram_{photo.file_id}.jpg"
+    try:
+        async with get_db_context() as db:
+            doc_service = DocumentService(db)
+            result = await doc_service.process_document(
+                user_id=user["id"],
+                image_bytes=bytes(image_bytes),
+                filename=f"telegram_{photo.file_id}.jpg"
+            )
+
+        response = (
+            f"Document Processed\n\n"
+            f"Type: {result['document_type']}\n\n"
+            f"Summary: {result['summary']}\n\n"
+            f"Original (German):\n{result['original_text'][:500]}{'...' if len(result['original_text']) > 500 else ''}\n\n"
+            f"Translation (English):\n{result['translated_text'][:500]}{'...' if len(result['translated_text']) > 500 else ''}"
         )
+        await update.message.reply_text(response)
+    except Exception as e:
+        logger.error(f"Photo processing error: {e}")
+        await update.message.reply_text(f"Error processing image: {str(e)[:100]}")
 
-    response = (
-        f" Document Processed\n\n"
-        f"Type: {result['document_type']}\n\n"
-        f"Summary: {result['summary']}\n\n"
-        f"Original (German):\n{result['original_text'][:500]}{'...' if len(result['original_text']) > 500 else ''}\n\n"
-        f"Translation (English):\n{result['translated_text'][:500]}{'...' if len(result['translated_text']) > 500 else ''}"
-    )
 
-    await update.message.reply_text(response)
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle document messages (PDFs, images sent as files)."""
+    user = await get_user(update)
+    document = update.message.document
+
+    # Check file type
+    mime_type = document.mime_type or ""
+    filename = document.file_name or "document"
+
+    supported_types = ["application/pdf", "image/jpeg", "image/png", "image/webp"]
+    if not any(t in mime_type for t in ["pdf", "image"]):
+        await update.message.reply_text(
+            f"Unsupported file type: {mime_type}\n"
+            "Please send a PDF or image file."
+        )
+        return
+
+    await update.message.reply_text(f"Processing {filename}...")
+
+    try:
+        file = await context.bot.get_file(document.file_id)
+        file_bytes = await file.download_as_bytearray()
+
+        async with get_db_context() as db:
+            doc_service = DocumentService(db)
+            result = await doc_service.process_document(
+                user_id=user["id"],
+                image_bytes=bytes(file_bytes),
+                filename=filename
+            )
+
+        response = (
+            f"Document Processed\n\n"
+            f"File: {filename}\n"
+            f"Type: {result['document_type']}\n\n"
+            f"Summary: {result['summary']}\n\n"
+            f"Original (German):\n{result['original_text'][:500]}{'...' if len(result['original_text']) > 500 else ''}\n\n"
+            f"Translation (English):\n{result['translated_text'][:500]}{'...' if len(result['translated_text']) > 500 else ''}"
+        )
+        await update.message.reply_text(response)
+    except Exception as e:
+        logger.error(f"Document processing error: {e}")
+        await update.message.reply_text(f"Error processing document: {str(e)[:100]}")
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -289,6 +337,7 @@ def create_bot_application() -> Application:
     application.add_handler(CommandHandler("search", search_command))
     application.add_handler(CommandHandler("ask", ask_command))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     return application
