@@ -57,7 +57,7 @@ class MemoryService:
                 category=category,
                 embedding=embedding,
                 source=source,
-                metadata=metadata or {}
+                doc_metadata=metadata or {}
             )
             self.db.add(new_memory)
             await self.db.flush()
@@ -112,7 +112,7 @@ class MemoryService:
                 Memory.content,
                 Memory.category,
                 Memory.source,
-                Memory.metadata,
+                Memory.doc_metadata,
                 (1 - Memory.embedding.cosine_distance(query_embedding)).label("similarity")
             )
             .where(Memory.user_id == user_id)
@@ -143,7 +143,7 @@ class MemoryService:
                 "content": row.content,
                 "category": row.category,
                 "source": row.source,
-                "metadata": row.metadata,
+                "metadata": row.doc_metadata,
                 "similarity": float(row.similarity) if row.similarity else 0.0
             }
             for row in rows
@@ -173,7 +173,7 @@ class MemoryService:
                 Document.translated_text,
                 Document.original_text,
                 Document.file_type.label("category"),
-                Document.metadata,
+                Document.doc_metadata,
                 (1 - Document.embedding.cosine_distance(query_embedding)).label("similarity")
             )
             .where(Document.user_id == user_id)
@@ -188,7 +188,7 @@ class MemoryService:
                 Memory.id,
                 Memory.content,
                 Memory.category,
-                Memory.metadata,
+                Memory.doc_metadata,
                 (1 - Memory.embedding.cosine_distance(query_embedding)).label("similarity")
             )
             .where(Memory.user_id == user_id)
@@ -212,7 +212,7 @@ class MemoryService:
                 "id": str(row.id),
                 "content": content,
                 "category": row.category,
-                "metadata": row.metadata,
+                "metadata": row.doc_metadata,
                 "similarity": float(row.similarity) if row.similarity else 0.0
             })
 
@@ -222,7 +222,7 @@ class MemoryService:
                 "id": str(row.id),
                 "content": row.content,
                 "category": row.category,
-                "metadata": row.metadata,
+                "metadata": row.doc_metadata,
                 "similarity": float(row.similarity) if row.similarity else 0.0
             })
 

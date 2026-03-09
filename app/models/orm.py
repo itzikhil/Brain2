@@ -16,7 +16,6 @@ from app.database import Base
 
 class User(Base):
     __tablename__ = "users"
-    __table_args__ = {'extend_existing': True}
 
     id = Column(Integer, primary_key=True)
     telegram_id = Column(BigInteger, unique=True, nullable=False)
@@ -33,7 +32,6 @@ class User(Base):
 
 class Document(Base):
     __tablename__ = "documents"
-    __table_args__ = {'extend_existing': True}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
@@ -44,7 +42,7 @@ class Document(Base):
     target_language = Column(String(10), default="en")
     embedding = Column(Vector(3072))
     file_type = Column(String(50))
-    metadata = Column(JSONB, default={})
+    doc_metadata = Column("metadata", JSONB, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
     # Relationships
@@ -53,7 +51,6 @@ class Document(Base):
 
 class ShoppingList(Base):
     __tablename__ = "shopping_lists"
-    __table_args__ = {'extend_existing': True}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
@@ -69,7 +66,6 @@ class ShoppingList(Base):
 
 class ShoppingItem(Base):
     __tablename__ = "shopping_items"
-    __table_args__ = {'extend_existing': True}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     list_id = Column(UUID(as_uuid=True), ForeignKey("shopping_lists.id", ondelete="CASCADE"))
@@ -85,7 +81,6 @@ class ShoppingItem(Base):
 
 class Memory(Base):
     __tablename__ = "memories"
-    __table_args__ = {'extend_existing': True}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
@@ -93,7 +88,7 @@ class Memory(Base):
     category = Column(String(100))
     embedding = Column(Vector(3072))
     source = Column(String(50), default="manual")
-    metadata = Column(JSONB, default={})
+    doc_metadata = Column("metadata", JSONB, default={})
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
     # Relationships
@@ -102,7 +97,6 @@ class Memory(Base):
 
 class ConversationState(Base):
     __tablename__ = "conversation_states"
-    __table_args__ = {'extend_existing': True}
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True)

@@ -82,7 +82,7 @@ class DocumentService:
                 target_language="en",
                 embedding=embedding,
                 file_type=ocr_result["document_type"],
-                metadata={"summary": ocr_result["summary"]}
+                doc_metadata={"summary": ocr_result["summary"]}
             )
             self.db.add(new_doc)
             await self.db.flush()
@@ -140,7 +140,7 @@ class DocumentService:
                 Document.original_text,
                 Document.translated_text,
                 Document.file_type,
-                Document.metadata,
+                Document.doc_metadata,
                 (1 - Document.embedding.cosine_distance(query_embedding)).label("similarity")
             )
             .where(Document.user_id == user_id)
@@ -164,7 +164,7 @@ class DocumentService:
                 "original_text": row.original_text,
                 "translated_text": row.translated_text,
                 "document_type": row.file_type,
-                "metadata": row.metadata,
+                "metadata": row.doc_metadata,
                 "similarity": float(row.similarity) if row.similarity else 0.0
             }
             for row in rows
@@ -188,6 +188,6 @@ class DocumentService:
             "original_text": doc.original_text,
             "translated_text": doc.translated_text,
             "document_type": doc.file_type,
-            "metadata": doc.metadata,
+            "metadata": doc.doc_metadata,
             "created_at": doc.created_at
         }
