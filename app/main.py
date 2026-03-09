@@ -1,19 +1,14 @@
-"""External Brain - Minimal startup to pass health checks."""
+"""External Brain - Absolute minimum to pass health check."""
 import logging
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ONLY import FastAPI - nothing else
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
-app = FastAPI(title="External Brain", version="1.0.0")
+app = FastAPI(title="External Brain")
 
-# Health check FIRST - zero dependencies
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -22,7 +17,7 @@ async def health():
 async def root():
     return {"status": "ready"}
 
-# Lazy globals
+# ALL other imports happen ONLY when needed
 _bot = None
 _ready = False
 
@@ -31,24 +26,21 @@ async def webhook(request: Request):
     global _bot, _ready
 
     try:
-        # Lazy import everything
+        # Lazy import EVERYTHING
+        from app.config import get_settings
+        settings = get_settings()
+
+        secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+        if secret != settings.telegram_webhook_secret:
+            return JSONResponse(status_code=403, content={"error": "Forbidden"})
+
         if not _ready:
-            logger.info("First request - initializing...")
+            logger.info("Initializing on first request...")
 
-            from app.config import get_settings
-            settings = get_settings()
-
-            # Validate token
-            secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-            if secret != settings.telegram_webhook_secret:
-                return JSONResponse(status_code=403, content={"error": "Forbidden"})
-
-            # Init database
             from app.database import init_db
             await init_db()
-            logger.info("Database ready")
+            logger.info("DB ready")
 
-            # Init bot
             from app.bot import create_bot_application
             _bot = create_bot_application()
             await _bot.initialize()
@@ -56,15 +48,7 @@ async def webhook(request: Request):
             logger.info("Bot ready")
 
             _ready = True
-        else:
-            # Already initialized - just validate token
-            from app.config import get_settings
-            settings = get_settings()
-            secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-            if secret != settings.telegram_webhook_secret:
-                return JSONResponse(status_code=403, content={"error": "Forbidden"})
 
-        # Process the update
         from telegram import Update
         data = await request.json()
         update = Update.de_json(data, _bot.bot)
@@ -72,7 +56,7 @@ async def webhook(request: Request):
         return Response(status_code=200)
 
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.error(f"Webhook error: {e}")
         import traceback
         traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": str(e)})
@@ -82,6 +66,9 @@ async def set_webhook(webhook_url: str):
     global _bot, _ready
 
     try:
+        from app.config import get_settings
+        settings = get_settings()
+
         if not _ready:
             from app.database import init_db
             await init_db()
@@ -92,14 +79,11 @@ async def set_webhook(webhook_url: str):
             await _bot.start()
             _ready = True
 
-        from app.config import get_settings
-        settings = get_settings()
-
         await _bot.bot.set_webhook(
             url=f"{webhook_url}/webhook/telegram",
             secret_token=settings.telegram_webhook_secret
         )
-        return {"status": "success", "url": f"{webhook_url}/webhook/telegram"}
+        return {"status": "success"}
 
     except Exception as e:
         logger.error(f"Error: {e}")
@@ -107,16 +91,6 @@ async def set_webhook(webhook_url: str):
 
 @app.get("/status")
 async def status():
-    return {"ready": _ready, "bot": _bot is not None}
+    return {"ready": _ready}
 
-# Try to load routers, but don't crash if they fail
-try:
-    from app.routers import documents, shopping, memory
-    app.include_router(documents.router, prefix="/api/documents")
-    app.include_router(shopping.router, prefix="/api/shopping")
-    app.include_router(memory.router, prefix="/api/memory")
-    logger.info("Routers loaded")
-except Exception as e:
-    logger.error(f"Router load failed (non-fatal): {e}")
-
-logger.info("App created - health check available")
+logger.info("App ready - health check available at /health")
