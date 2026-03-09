@@ -22,8 +22,8 @@ class GeminiService:
         logger.info(f"Initializing Gemini with API key: {api_key[:10]}...")
         genai.configure(api_key=api_key)
 
-        self.vision_model = genai.GenerativeModel("gemini-2.0-flash")
-        self.embedding_model = "models/gemini-embedding-001"
+        self.vision_model = genai.GenerativeModel("gemini-2.5-flash-lite-preview")
+        self.embedding_model = "models/text-embedding-004"
         logger.info("GeminiService initialized successfully")
 
     def _detect_mime_type(self, file_bytes: bytes) -> str:
