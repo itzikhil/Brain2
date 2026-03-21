@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     embedding_dimension: int = 3072
     default_search_limit: int = 5
 
+    # Cloudflare R2 storage (optional)
+    r2_account_id: Optional[str] = None
+    r2_access_key_id: Optional[str] = None
+    r2_secret_access_key: Optional[str] = None
+    r2_bucket_name: str = "brain2-docs"
+
     class Config:
         env_file = ".env"
         extra = "ignore"

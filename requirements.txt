@@ -17,6 +17,9 @@ google-generativeai>=0.8.0
 # PDF Processing
 pypdf>=4.0.0
 
+# Storage
+boto3>=1.34.0
+
 # Utilities
 python-dotenv>=1.0.0
 httpx>=0.26.0

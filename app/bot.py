@@ -19,6 +19,7 @@ from app.services.documents import DocumentService
 from app.services.shopping import ShoppingService
 from app.services.memory import MemoryService
 from app.services.gemini import get_gemini
+from app.services.storage import get_storage
 
 logger = logging.getLogger(__name__)
 
@@ -423,6 +424,36 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(response)
         logger.info(f"AI response sent (with context: {bool(context_str)})")
+
+        # Send back original files from R2 if available
+        storage = get_storage()
+        if storage.enabled and search_result["results"]:
+            for item in search_result["results"]:
+                # Only send documents (not memories) that have R2 keys
+                if item["source_type"] == "document" and item.get("metadata", {}).get("r2_key"):
+                    r2_key = item["metadata"]["r2_key"]
+                    try:
+                        # Download file from R2
+                        file_bytes = storage.download_file(r2_key)
+                        if file_bytes:
+                            # Extract filename from R2 key (format: category/year/date_type_filename)
+                            filename = r2_key.split("/")[-1]  # Get last part of path
+                            # Remove date and type prefix (date_type_filename -> filename)
+                            parts = filename.split("_", 2)
+                            if len(parts) >= 3:
+                                filename = parts[2]
+
+                            # Send document back to user
+                            from io import BytesIO
+                            await context.bot.send_document(
+                                chat_id=update.effective_chat.id,
+                                document=BytesIO(file_bytes),
+                                filename=filename,
+                                caption=f"📎 {item['category'] or 'Document'}"
+                            )
+                            logger.info(f"Sent file from R2: {r2_key}")
+                    except Exception as e:
+                        logger.error(f"Failed to send file from R2 ({r2_key}): {e}")
 
     except Exception as e:
         error_msg = str(e)[:200]

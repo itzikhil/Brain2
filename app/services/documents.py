@@ -7,6 +7,7 @@ from uuid import UUID
 
 from app.models.orm import Document
 from app.services.gemini import get_gemini
+from app.services.storage import get_storage
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +44,23 @@ class DocumentService:
             logger.error(f"Embedding generation failed: {e}")
             raise
 
+        # Upload original file to R2 storage
+        storage = get_storage()
+        r2_key = None
+        if storage.enabled:
+            r2_key = storage.upload_document(
+                file_bytes=image_bytes,
+                filename=filename or "document",
+                document_type=ocr_result["document_type"],
+                category="documents"
+            )
+
         # Store in database using ORM
         try:
+            metadata = {"summary": ocr_result["summary"]}
+            if r2_key:
+                metadata["r2_key"] = r2_key
+
             new_doc = Document(
                 user_id=user_id,
                 filename=filename,
@@ -54,7 +70,7 @@ class DocumentService:
                 target_language="en",
                 embedding=embedding,
                 file_type=ocr_result["document_type"],
-                doc_metadata={"summary": ocr_result["summary"]}
+                doc_metadata=metadata
             )
             self.db.add(new_doc)
             await self.db.flush()
