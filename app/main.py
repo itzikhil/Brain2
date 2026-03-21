@@ -1,4 +1,4 @@
-"""External Brain - Absolute minimum to pass health check."""
+"""External Brain - FastAPI app with lazy initialization."""
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -9,24 +9,39 @@ from fastapi.responses import JSONResponse
 
 app = FastAPI(title="External Brain")
 
+# Lazy initialization state
+_bot = None
+_ready = False
+
+
 @app.get("/health")
 async def health():
+    """Health check endpoint for Railway."""
     return {"status": "ok"}
+
 
 @app.get("/")
 async def root():
     return {"status": "ready"}
 
-# ALL other imports happen ONLY when needed
-_bot = None
-_ready = False
+
+@app.get("/status")
+async def status():
+    """Check if bot is initialized."""
+    return {"ready": _ready}
+
 
 @app.post("/webhook/telegram")
 async def webhook(request: Request):
+    """
+    Telegram webhook endpoint with lazy initialization.
+
+    Only initializes the bot on first request to speed up deployment.
+    """
     global _bot, _ready
 
     try:
-        # Lazy import EVERYTHING
+        # Verify webhook secret
         from app.config import get_settings
         settings = get_settings()
 
@@ -34,12 +49,13 @@ async def webhook(request: Request):
         if secret != settings.telegram_webhook_secret:
             return JSONResponse(status_code=403, content={"error": "Forbidden"})
 
+        # Lazy initialization on first request
         if not _ready:
             logger.info("Initializing on first request...")
 
             from app.database import init_db
             await init_db()
-            logger.info("DB ready")
+            logger.info("Database ready")
 
             from app.bot import create_bot_application
             _bot = create_bot_application()
@@ -49,6 +65,7 @@ async def webhook(request: Request):
 
             _ready = True
 
+        # Process update
         from telegram import Update
         data = await request.json()
         update = Update.de_json(data, _bot.bot)
@@ -61,8 +78,10 @@ async def webhook(request: Request):
         traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": str(e)})
 
+
 @app.post("/webhook/set")
 async def set_webhook(webhook_url: str):
+    """Set Telegram webhook URL."""
     global _bot, _ready
 
     try:
@@ -86,11 +105,8 @@ async def set_webhook(webhook_url: str):
         return {"status": "success"}
 
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.error(f"Webhook set error: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-@app.get("/status")
-async def status():
-    return {"ready": _ready}
 
-logger.info("App ready - health check available at /health")
+logger.info("FastAPI app ready - health check available at /health")

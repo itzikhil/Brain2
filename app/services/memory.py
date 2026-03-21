@@ -1,3 +1,4 @@
+"""Memory storage and associative search service."""
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, literal
@@ -5,8 +6,7 @@ from typing import Optional
 from uuid import UUID
 
 from app.models.orm import Memory, Document
-from app.services.gemini import GeminiService
-from app.services.logger import log_event
+from app.services.gemini import get_gemini
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 class MemoryService:
     def __init__(self, db: AsyncSession):
         self.db = db
-        self.gemini = GeminiService()
 
     async def store_memory(
         self,
@@ -25,29 +24,15 @@ class MemoryService:
         metadata: dict = None
     ) -> dict:
         """Store a memory with embedding."""
-        await log_event(
-            "memory",
-            f"Storing memory: '{content[:50]}...'",
-            "pending",
-            user_id=user_id,
-            metadata={"category": category, "source": source}
-        )
+        logger.info(f"Storing memory: '{content[:50]}...' (category: {category}, source: {source})")
+
+        gemini = get_gemini()
 
         try:
-            embedding = await self.gemini.generate_embedding(content)
-            await log_event(
-                "embedding",
-                f"Memory vector created: {len(embedding)}d",
-                "success",
-                user_id=user_id
-            )
+            embedding = await gemini.generate_embedding(content)
+            logger.info(f"Memory vector created: {len(embedding)}d")
         except Exception as e:
-            await log_event(
-                "embedding",
-                f"Memory embedding failed: {str(e)[:100]}",
-                "error",
-                user_id=user_id
-            )
+            logger.error(f"Memory embedding failed: {e}")
             raise
 
         try:
@@ -64,13 +49,7 @@ class MemoryService:
             await self.db.refresh(new_memory)
 
             memory_id = str(new_memory.id)
-            await log_event(
-                "memory",
-                f"Memory saved: {memory_id[:8]}...",
-                "success",
-                user_id=user_id,
-                metadata={"category": category}
-            )
+            logger.info(f"Memory saved: {memory_id[:8]}... (category: {category})")
 
             return {
                 "id": memory_id,
@@ -80,12 +59,7 @@ class MemoryService:
                 "created_at": new_memory.created_at
             }
         except Exception as e:
-            await log_event(
-                "memory",
-                f"Memory save failed: {str(e)[:100]}",
-                "error",
-                user_id=user_id
-            )
+            logger.error(f"Memory save failed: {e}")
             raise
 
     async def search_memories(
@@ -96,14 +70,10 @@ class MemoryService:
         category: Optional[str] = None
     ) -> list[dict]:
         """Search memories using vector similarity."""
-        await log_event(
-            "search",
-            f"Memory search: '{query[:50]}'",
-            "info",
-            user_id=user_id
-        )
+        logger.info(f"Memory search: '{query[:50]}'")
 
-        query_embedding = await self.gemini.generate_query_embedding(query)
+        gemini = get_gemini()
+        query_embedding = await gemini.generate_query_embedding(query)
 
         # Build SQLAlchemy query with pgvector cosine distance
         stmt = (
@@ -130,12 +100,7 @@ class MemoryService:
         result = await self.db.execute(stmt)
         rows = result.all()
 
-        await log_event(
-            "search",
-            f"Found {len(rows)} memories",
-            "success",
-            user_id=user_id
-        )
+        logger.info(f"Found {len(rows)} memories")
 
         return [
             {
@@ -155,15 +120,11 @@ class MemoryService:
         query: str,
         limit: int = 5
     ) -> dict:
-        """Search both documents and memories, return combined results with AI answer."""
-        await log_event(
-            "search",
-            f"Associative search: '{query[:50]}'",
-            "info",
-            user_id=user_id
-        )
+        """Search both documents and memories, return combined results."""
+        logger.info(f"Associative search: '{query[:50]}'")
 
-        query_embedding = await self.gemini.generate_query_embedding(query)
+        gemini = get_gemini()
+        query_embedding = await gemini.generate_query_embedding(query)
 
         # Search documents using SQLAlchemy
         doc_stmt = (
@@ -207,54 +168,40 @@ class MemoryService:
 
         for row in doc_rows:
             content = row.translated_text or row.original_text
-            all_results.append({
-                "source_type": row.source_type,
-                "id": str(row.id),
-                "content": content,
-                "category": row.category,
-                "metadata": row.doc_metadata,
-                "similarity": float(row.similarity) if row.similarity else 0.0
-            })
+            similarity = float(row.similarity) if row.similarity else 0.0
+            # Apply similarity threshold
+            if similarity >= 0.35:
+                all_results.append({
+                    "source_type": row.source_type,
+                    "id": str(row.id),
+                    "content": content,
+                    "category": row.category,
+                    "metadata": row.doc_metadata,
+                    "similarity": similarity
+                })
 
         for row in mem_rows:
-            all_results.append({
-                "source_type": row.source_type,
-                "id": str(row.id),
-                "content": row.content,
-                "category": row.category,
-                "metadata": row.doc_metadata,
-                "similarity": float(row.similarity) if row.similarity else 0.0
-            })
+            similarity = float(row.similarity) if row.similarity else 0.0
+            # Apply similarity threshold
+            if similarity >= 0.35:
+                all_results.append({
+                    "source_type": row.source_type,
+                    "id": str(row.id),
+                    "content": row.content,
+                    "category": row.category,
+                    "metadata": row.doc_metadata,
+                    "similarity": similarity
+                })
 
         # Sort by similarity and take top results
         all_results.sort(key=lambda x: x["similarity"], reverse=True)
         top_results = all_results[:limit]
 
-        await log_event(
-            "search",
-            f"Associative search complete: {len(doc_rows)} docs, {len(mem_rows)} memories",
-            "success",
-            user_id=user_id,
-            metadata={"top_similarity": top_results[0]["similarity"] if top_results else 0}
-        )
-
-        # Generate AI answer if we have context
-        answer = None
-        if top_results:
-            try:
-                answer = await self.gemini.answer_with_context(query, top_results)
-            except Exception as e:
-                await log_event(
-                    "error",
-                    f"AI answer generation failed: {str(e)[:100]}",
-                    "error",
-                    user_id=user_id
-                )
+        logger.info(f"Associative search complete: {len([r for r in doc_rows if (float(r.similarity) if r.similarity else 0) >= 0.35])} docs, {len([r for r in mem_rows if (float(r.similarity) if r.similarity else 0) >= 0.35])} memories above threshold")
 
         return {
             "query": query,
-            "results": top_results,
-            "answer": answer
+            "results": top_results
         }
 
     async def delete_memory(self, user_id: int, memory_id: UUID) -> bool:
@@ -270,11 +217,6 @@ class MemoryService:
         deleted = deleted_row is not None
 
         if deleted:
-            await log_event(
-                "memory",
-                f"Memory deleted: {str(memory_id)[:8]}...",
-                "info",
-                user_id=user_id
-            )
+            logger.info(f"Memory deleted: {str(memory_id)[:8]}...")
 
         return deleted

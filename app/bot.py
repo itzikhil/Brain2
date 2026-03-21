@@ -1,5 +1,7 @@
+"""Telegram bot with conversational AI agent."""
 import logging
 import traceback
+import re
 from datetime import datetime
 from telegram import Update, Bot
 from telegram.ext import (
@@ -16,6 +18,7 @@ from app.services.user import UserService
 from app.services.documents import DocumentService
 from app.services.shopping import ShoppingService
 from app.services.memory import MemoryService
+from app.services.gemini import get_gemini
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +35,7 @@ def get_cached_settings():
 
 async def log_to_channel(bot: Bot, message: str, level: str = "info"):
     """
-    Send a log message to the private Telegram channel.
+    Optional logging to private Telegram channel.
 
     Args:
         bot: The Telegram bot instance
@@ -42,7 +45,6 @@ async def log_to_channel(bot: Bot, message: str, level: str = "info"):
     settings = get_cached_settings()
 
     if not settings.log_channel_id:
-        logger.info(f"[NO_CHANNEL] {message}")
         return
 
     # Add emoji based on level
@@ -54,8 +56,6 @@ async def log_to_channel(bot: Bot, message: str, level: str = "info"):
         "pending": "⏳",
         "document": "📄",
         "photo": "📷",
-        "search": "🔍",
-        "memory": "🧠",
     }
     icon = icons.get(level, "📌")
     timestamp = datetime.now().strftime("%H:%M:%S")
@@ -95,35 +95,32 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await update.message.reply_text(
-        f"Hello {user['first_name'] or 'there'}! I'm your External Brain.\n\n"
-        "Commands:\n"
-        "/photo - Send a German document photo for OCR & translation\n"
-        "/search <query> - Search your documents & memories\n"
-        "/remember <text> - Store a memory\n"
+        f"Hello {user['first_name'] or 'there'}! I'm Brain, your personal assistant.\n\n"
+        "Just talk to me naturally:\n"
+        "• Ask me questions\n"
+        "• Tell me to remember things\n"
+        "• Send photos of documents (I'll OCR and translate German)\n\n"
+        "Shopping commands:\n"
         "/add <item> - Add item to shopping list\n"
         "/list - Show shopping list\n"
-        "/done - Close shopping session\n"
-        "/help - Show this message"
+        "/clear - Remove checked items\n"
+        "/done - Close shopping session"
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command."""
     await update.message.reply_text(
-        "External Brain Commands:\n\n"
-        "Document Filing:\n"
-        "  Send any photo of a German document\n"
-        "  I'll OCR, translate, and store it\n\n"
-        "Shopping List:\n"
-        "  /add <item> - Add item (e.g., /add 2 kg apples)\n"
-        "  /list - Show current list\n"
-        "  /check <item> - Mark item done\n"
-        "  /clear - Remove checked items\n"
-        "  /done - Close shopping session\n\n"
-        "Memory & Search:\n"
-        "  /remember <text> - Store a memory\n"
-        "  /search <query> - Search everything\n"
-        "  /ask <question> - Ask about your data"
+        "I'm Brain, your conversational assistant.\n\n"
+        "Talk to me naturally:\n"
+        "• Ask questions about your stored information\n"
+        "• Tell me to remember things\n"
+        "• Send photos of documents for OCR & translation\n\n"
+        "Shopping List Commands:\n"
+        "/add <item> - Add item (e.g., /add 2 kg apples)\n"
+        "/list - Show current list\n"
+        "/clear - Remove checked items\n"
+        "/done - Close shopping session"
     )
 
 
@@ -170,6 +167,7 @@ async def add_item_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "success"
         )
     except Exception as e:
+        logger.error(f"Shopping add error: {e}")
         await log_to_channel(
             context.bot,
             f"*Shopping Add Error*\nUser: `{user['id']}`\nError: `{str(e)[:200]}`",
@@ -231,117 +229,13 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Removed {count} checked items.")
 
 
-async def remember_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /remember command to store a memory."""
-    user = await get_user(update)
-
-    if not context.args:
-        await update.message.reply_text("Usage: /remember <text to remember>")
-        return
-
-    content = " ".join(context.args)
-
-    try:
-        await log_to_channel(
-            context.bot,
-            f"🧠 *Storing Memory*\nUser: `{user['id']}`\nContent: {content[:100]}...",
-            "pending"
-        )
-
-        async with get_db_context() as db:
-            memory_service = MemoryService(db)
-            result = await memory_service.store_memory(
-                user_id=user["id"],
-                content=content,
-                source="telegram"
-            )
-
-        await update.message.reply_text(f"Stored in memory.\nID: {result['id'][:8]}...")
-
-        await log_to_channel(
-            context.bot,
-            f"🧠 *Memory Stored*\nUser: `{user['id']}`\nID: `{result['id'][:8]}`\nVector: 3072d ✓",
-            "success"
-        )
-    except Exception as e:
-        error_msg = str(e)[:200]
-        await log_to_channel(
-            context.bot,
-            f"*Memory Store Error*\nUser: `{user['id']}`\nError: `{error_msg}`\n\n```{traceback.format_exc()[:500]}```",
-            "error"
-        )
-        await update.message.reply_text("Error storing memory. Please try again.")
-
-
-async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /search command for associative retrieval."""
-    user = await get_user(update)
-
-    if not context.args:
-        await update.message.reply_text("Usage: /search <query>")
-        return
-
-    query = " ".join(context.args)
-
-    try:
-        await log_to_channel(
-            context.bot,
-            f"🔍 *Search Query*\nUser: `{user['id']}`\nQuery: {query[:100]}",
-            "search"
-        )
-
-        async with get_db_context() as db:
-            memory_service = MemoryService(db)
-            result = await memory_service.associative_search(
-                user_id=user["id"],
-                query=query,
-                limit=5
-            )
-
-        if not result["results"]:
-            await update.message.reply_text("No matching results found.")
-            await log_to_channel(context.bot, f"🔍 Search complete: 0 results", "info")
-            return
-
-        lines = [f"Search: {query}\n"]
-
-        for i, item in enumerate(result["results"], 1):
-            source = "📄" if item["source_type"] == "document" else "🧠"
-            similarity = f"{item['similarity']:.0%}"
-            content = item["content"][:100] + "..." if len(item["content"]) > 100 else item["content"]
-            lines.append(f"{i}. {source} [{similarity}] {content}")
-
-        if result["answer"]:
-            lines.append(f"\n💡 Answer:\n{result['answer']}")
-
-        await update.message.reply_text("\n".join(lines))
-
-        await log_to_channel(
-            context.bot,
-            f"🔍 *Search Complete*\nResults: {len(result['results'])}\nTop similarity: {result['results'][0]['similarity']:.0%}",
-            "success"
-        )
-    except Exception as e:
-        await log_to_channel(
-            context.bot,
-            f"*Search Error*\nUser: `{user['id']}`\nQuery: {query[:50]}\nError: `{str(e)[:200]}`",
-            "error"
-        )
-        await update.message.reply_text("Error performing search. Please try again.")
-
-
-async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /ask command - same as search but focused on answer."""
-    await search_command(update, context)
-
-
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle photo messages for OCR."""
     user = await get_user(update)
 
     await log_to_channel(
         context.bot,
-        f"📷 *Photo Received*\nUser: `{user['id']}` (@{update.effective_user.username or 'N/A'})\nProcessing...",
+        f"📷 *Photo Received*\nUser: `{user['id']}` (@{update.effective_user.username or 'N/A'})",
         "pending"
     )
 
@@ -354,11 +248,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file = await context.bot.get_file(photo.file_id)
         image_bytes = await file.download_as_bytearray()
 
-        await log_to_channel(
-            context.bot,
-            f"📷 *Photo Downloaded*\nSize: {len(image_bytes)} bytes\nStarting OCR...",
-            "info"
-        )
+        logger.info(f"Photo downloaded: {len(image_bytes)} bytes")
 
         async with get_db_context() as db:
             doc_service = DocumentService(db)
@@ -379,22 +269,21 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await log_to_channel(
             context.bot,
-            f"📷 *Photo Processed Successfully*\nUser: `{user['id']}`\nType: {result['document_type']}\nDoc ID: `{result['id'][:8]}`\nVector: 3072d ✓\n\nSummary: {result['summary'][:200]}",
+            f"📷 *Photo Processed*\nUser: `{user['id']}`\nType: {result['document_type']}\nDoc ID: `{result['id'][:8]}`",
             "success"
         )
 
     except Exception as e:
         error_msg = str(e)[:300]
-        logger.error(f"Photo processing error: {e}")
+        logger.error(f"Photo processing error: {e}\n{traceback.format_exc()}")
 
         await log_to_channel(
             context.bot,
-            f"*Photo Processing FAILED*\nUser: `{user['id']}`\nError: `{error_msg}`\n\n```{traceback.format_exc()[:500]}```",
+            f"*Photo Processing FAILED*\nUser: `{user['id']}`\nError: `{error_msg}`",
             "error"
         )
 
-        # DEBUG: Show actual error to user temporarily
-        await update.message.reply_text(f"DEBUG Photo Error: {error_msg}\n\nTraceback: {traceback.format_exc()[:300]}")
+        await update.message.reply_text(f"Error processing photo: {error_msg}")
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -408,11 +297,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await log_to_channel(
         context.bot,
-        f"📄 *Document Received*\nUser: `{user['id']}` (@{update.effective_user.username or 'N/A'})\nFile: `{filename}`\nMIME: `{mime_type}`\nSize: {document.file_size} bytes",
+        f"📄 *Document Received*\nUser: `{user['id']}`\nFile: `{filename}`\nMIME: `{mime_type}`",
         "pending"
     )
 
-    supported_types = ["application/pdf", "image/jpeg", "image/png", "image/webp"]
     if not any(t in mime_type for t in ["pdf", "image"]):
         await log_to_channel(
             context.bot,
@@ -431,11 +319,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file = await context.bot.get_file(document.file_id)
         file_bytes = await file.download_as_bytearray()
 
-        await log_to_channel(
-            context.bot,
-            f"📄 *File Downloaded*\nFile: `{filename}`\nSize: {len(file_bytes)} bytes\nStarting OCR with Gemini 2.0...",
-            "info"
-        )
+        logger.info(f"File downloaded: {filename} ({len(file_bytes)} bytes)")
 
         async with get_db_context() as db:
             doc_service = DocumentService(db)
@@ -457,78 +341,100 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await log_to_channel(
             context.bot,
-            f"📄 *Document Processed Successfully*\nUser: `{user['id']}`\nFile: `{filename}`\nType: {result['document_type']}\nDoc ID: `{result['id'][:8]}`\nVector: 3072d ✓\n\nSummary: {result['summary'][:200]}",
+            f"📄 *Document Processed*\nUser: `{user['id']}`\nFile: `{filename}`\nType: {result['document_type']}\nDoc ID: `{result['id'][:8]}`",
             "success"
         )
 
     except Exception as e:
         error_msg = str(e)[:300]
-        logger.error(f"Document processing error: {e}")
+        logger.error(f"Document processing error: {e}\n{traceback.format_exc()}")
 
         await log_to_channel(
             context.bot,
-            f"*Document Processing FAILED*\nUser: `{user['id']}`\nFile: `{filename}`\nError: `{error_msg}`\n\n```{traceback.format_exc()[:500]}```",
+            f"*Document Processing FAILED*\nUser: `{user['id']}`\nFile: `{filename}`\nError: `{error_msg}`",
             "error"
         )
 
-        # DEBUG: Show actual error to user temporarily
-        await update.message.reply_text(f"DEBUG Doc Error: {error_msg}\n\nTraceback: {traceback.format_exc()[:300]}")
+        await update.message.reply_text(f"Error processing document: {error_msg}")
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle regular text messages - treat as search query."""
-    user = await get_user(update)
-    query = update.message.text
+    """
+    Handle regular text messages with conversational AI.
 
-    await log_to_channel(
-        context.bot,
-        f"💬 *Text Message*\nUser: `{user['id']}` (@{update.effective_user.username or 'N/A'})\nText: {query[:100]}{'...' if len(query) > 100 else ''}",
-        "info"
-    )
+    Detects "remember X" naturally, searches knowledge base,
+    and provides natural responses with context.
+    """
+    user = await get_user(update)
+    message = update.message.text
+
+    logger.info(f"Text from user {user['id']}: {message[:100]}")
 
     try:
+        # Detect "remember" intent naturally
+        remember_patterns = [
+            r'^remember\s+(.+)$',
+            r'^please remember\s+(.+)$',
+            r'^can you remember\s+(.+)$',
+            r'^store\s+(.+)$',
+            r'^save\s+(.+)$',
+        ]
+
+        for pattern in remember_patterns:
+            match = re.match(pattern, message.lower())
+            if match:
+                content = message[match.start(1) - match.start():].strip()
+
+                # Store memory
+                async with get_db_context() as db:
+                    memory_service = MemoryService(db)
+                    result = await memory_service.store_memory(
+                        user_id=user["id"],
+                        content=content,
+                        source="telegram"
+                    )
+
+                await update.message.reply_text(f"Got it! I'll remember that.")
+                logger.info(f"Stored memory: {result['id'][:8]}")
+                return
+
+        # Search knowledge base for relevant context
+        context_str = None
         async with get_db_context() as db:
             memory_service = MemoryService(db)
-            result = await memory_service.associative_search(
+            search_result = await memory_service.associative_search(
                 user_id=user["id"],
-                query=query,
+                query=message,
                 limit=3
             )
 
-        if result["answer"]:
-            await update.message.reply_text(result["answer"])
-            await log_to_channel(
-                context.bot,
-                f"💬 *AI Answer Generated*\nResults: {len(result['results'])}",
-                "success"
-            )
-        elif result["results"]:
-            content = result["results"][0]["content"]
-            await update.message.reply_text(f"Best match:\n{content[:500]}")
-            await log_to_channel(
-                context.bot,
-                f"💬 *Best Match Found*\nSimilarity: {result['results'][0]['similarity']:.0%}",
-                "success"
-            )
-        else:
-            await update.message.reply_text(
-                "I don't have information about that yet.\n"
-                "Use /remember to store knowledge or send a document photo."
-            )
-            await log_to_channel(context.bot, f"💬 No matches found", "info")
+        # Build context string from relevant results
+        if search_result["results"]:
+            context_parts = []
+            for item in search_result["results"]:
+                source = "Document" if item["source_type"] == "document" else "Memory"
+                context_parts.append(f"[{source}, similarity: {item['similarity']:.0%}]\n{item['content'][:500]}")
+            context_str = "\n\n---\n\n".join(context_parts)
+            logger.info(f"Found {len(search_result['results'])} relevant items (top: {search_result['results'][0]['similarity']:.0%})")
+
+        # Get AI response with context
+        gemini = get_gemini()
+        response = await gemini.chat(message, context=context_str)
+
+        await update.message.reply_text(response)
+        logger.info(f"AI response sent (with context: {bool(context_str)})")
 
     except Exception as e:
         error_msg = str(e)[:200]
-        logger.error(f"Text handling error: {e}")
+        logger.error(f"Text handling error: {e}\n{traceback.format_exc()}")
 
         await log_to_channel(
             context.bot,
-            f"*Text Search FAILED*\nUser: `{user['id']}`\nError: `{error_msg}`\n\n```{traceback.format_exc()[:500]}```",
+            f"*Text Handling Error*\nUser: `{user['id']}`\nError: `{error_msg}`",
             "error"
         )
 
-        # DEBUG: Show actual error to user temporarily
-        await update.message.reply_text(f"DEBUG Error: {error_msg}\n\nTraceback: {traceback.format_exc()[:300]}")
+        await update.message.reply_text(f"Sorry, I encountered an error: {error_msg}")
 
 
 def create_bot_application() -> Application:
@@ -543,9 +449,6 @@ def create_bot_application() -> Application:
     application.add_handler(CommandHandler("list", list_items_command))
     application.add_handler(CommandHandler("done", done_command))
     application.add_handler(CommandHandler("clear", clear_command))
-    application.add_handler(CommandHandler("remember", remember_command))
-    application.add_handler(CommandHandler("search", search_command))
-    application.add_handler(CommandHandler("ask", ask_command))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))

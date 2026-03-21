@@ -1,3 +1,4 @@
+"""Gemini AI service with singleton pattern."""
 import logging
 import google.generativeai as genai
 from typing import Optional
@@ -7,8 +8,14 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+_gemini_instance: Optional["GeminiService"] = None
+
 
 class GeminiService:
+    """Singleton service for Google Gemini AI."""
+
+    SYSTEM_PROMPT = "You are Brain, a personal assistant. The user is based in Germany."
+
     def __init__(self):
         settings = get_settings()
 
@@ -22,8 +29,12 @@ class GeminiService:
         logger.info(f"Initializing Gemini with API key: {api_key[:10]}...")
         genai.configure(api_key=api_key)
 
-        self.vision_model = genai.GenerativeModel("gemini-2.5-flash")
-        self.embedding_model = "text-embedding-005"
+        # Use the specified model for chat/OCR
+        self.chat_model = genai.GenerativeModel(
+            "gemini-2.5-flash-preview-05-20",
+            system_instruction=self.SYSTEM_PROMPT
+        )
+        self.embedding_model = "text-embedding-004"
         logger.info("GeminiService initialized successfully")
 
     def _detect_mime_type(self, file_bytes: bytes) -> str:
@@ -40,6 +51,28 @@ class GeminiService:
             return "image/gif"
         else:
             return "image/jpeg"  # Default fallback
+
+    async def chat(self, message: str, context: Optional[str] = None) -> str:
+        """
+        Send a message to Gemini and get a response.
+
+        Args:
+            message: The user's message
+            context: Optional context from knowledge base to include
+
+        Returns:
+            The AI's response
+        """
+        if context:
+            prompt = f"""Context from knowledge base:
+{context}
+
+User message: {message}"""
+        else:
+            prompt = message
+
+        response = await self.chat_model.generate_content_async(prompt)
+        return response.text
 
     async def ocr_and_translate(
         self,
@@ -70,7 +103,7 @@ DOCUMENT_TYPE:
 SUMMARY:
 [brief summary of what this document is about]"""
 
-        response = await self.vision_model.generate_content_async([
+        response = await self.chat_model.generate_content_async([
             {"mime_type": mime_type, "data": file_data},
             prompt
         ])
@@ -122,7 +155,7 @@ SUMMARY:
 
     async def generate_embedding(self, text: str) -> list[float]:
         """Generate embedding vector for text."""
-        result = genai.embed_content(
+        result = await genai.embed_content_async(
             model=self.embedding_model,
             content=text,
             task_type="retrieval_document"
@@ -131,33 +164,17 @@ SUMMARY:
 
     async def generate_query_embedding(self, text: str) -> list[float]:
         """Generate embedding for search query."""
-        result = genai.embed_content(
+        result = await genai.embed_content_async(
             model=self.embedding_model,
             content=text,
             task_type="retrieval_query"
         )
         return result["embedding"]
 
-    async def answer_with_context(
-        self,
-        query: str,
-        context_docs: list[dict]
-    ) -> str:
-        """Generate answer using retrieved context."""
-        context_text = "\n\n---\n\n".join([
-            f"Document {i+1} (similarity: {doc.get('similarity', 'N/A'):.2f}):\n{doc.get('content', '')}"
-            for i, doc in enumerate(context_docs)
-        ])
 
-        prompt = f"""Based on the following documents from the user's personal knowledge base, answer their question.
-If the documents don't contain relevant information, say so.
-
-RETRIEVED DOCUMENTS:
-{context_text}
-
-USER QUESTION: {query}
-
-ANSWER:"""
-
-        response = await self.vision_model.generate_content_async(prompt)
-        return response.text
+def get_gemini() -> GeminiService:
+    """Get or create the singleton GeminiService instance."""
+    global _gemini_instance
+    if _gemini_instance is None:
+        _gemini_instance = GeminiService()
+    return _gemini_instance

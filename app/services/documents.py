@@ -1,13 +1,12 @@
+"""Document processing service with OCR, translation, and vector storage."""
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, insert, func
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import select
 from typing import Optional
 from uuid import UUID
 
-from app.models.orm import Document, User
-from app.services.gemini import GeminiService
-from app.services.logger import log_event
+from app.models.orm import Document
+from app.services.gemini import get_gemini
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +14,6 @@ logger = logging.getLogger(__name__)
 class DocumentService:
     def __init__(self, db: AsyncSession):
         self.db = db
-        self.gemini = GeminiService()
 
     async def process_document(
         self,
@@ -24,51 +22,25 @@ class DocumentService:
         filename: Optional[str] = None
     ) -> dict:
         """Process document: OCR, translate, embed, and store."""
-        await log_event(
-            "document",
-            f"Processing document: {filename or 'unnamed'}",
-            "pending",
-            user_id=user_id,
-            metadata={"size_bytes": len(image_bytes)}
-        )
+        logger.info(f"Processing document: {filename or 'unnamed'} ({len(image_bytes)} bytes)")
+
+        gemini = get_gemini()
 
         # OCR and translate
         try:
-            ocr_result = await self.gemini.ocr_and_translate(image_bytes)
-            await log_event(
-                "ocr",
-                f"OCR completed: {ocr_result['document_type']}",
-                "success",
-                user_id=user_id,
-                metadata={"chars_extracted": len(ocr_result['original_text'])}
-            )
+            ocr_result = await gemini.ocr_and_translate(image_bytes)
+            logger.info(f"OCR completed: {ocr_result['document_type']} ({len(ocr_result['original_text'])} chars)")
         except Exception as e:
-            await log_event(
-                "ocr",
-                f"Gemini OCR failed: {str(e)[:100]}",
-                "error",
-                user_id=user_id,
-                metadata={"filename": filename}
-            )
+            logger.error(f"Gemini OCR failed: {e}")
             raise
 
         # Generate embedding from combined text
         try:
             combined_text = f"{ocr_result['original_text']}\n\n{ocr_result['translated_text']}"
-            embedding = await self.gemini.generate_embedding(combined_text)
-            await log_event(
-                "embedding",
-                f"Vector created: {len(embedding)}d",
-                "success",
-                user_id=user_id
-            )
+            embedding = await gemini.generate_embedding(combined_text)
+            logger.info(f"Embedding generated: {len(embedding)}d")
         except Exception as e:
-            await log_event(
-                "embedding",
-                f"Embedding generation failed: {str(e)[:100]}",
-                "error",
-                user_id=user_id
-            )
+            logger.error(f"Embedding generation failed: {e}")
             raise
 
         # Store in database using ORM
@@ -89,16 +61,7 @@ class DocumentService:
             await self.db.refresh(new_doc)
 
             doc_id = str(new_doc.id)
-            await log_event(
-                "document",
-                f"Document saved: {doc_id[:8]}...",
-                "success",
-                user_id=user_id,
-                metadata={
-                    "doc_type": ocr_result["document_type"],
-                    "filename": filename
-                }
-            )
+            logger.info(f"Document saved: {doc_id[:8]}... ({ocr_result['document_type']})")
 
             return {
                 "id": doc_id,
@@ -109,12 +72,7 @@ class DocumentService:
                 "created_at": new_doc.created_at
             }
         except Exception as e:
-            await log_event(
-                "document",
-                f"Database insert failed: {str(e)[:100]}",
-                "error",
-                user_id=user_id
-            )
+            logger.error(f"Database insert failed: {e}")
             raise
 
     async def search_documents(
@@ -124,14 +82,10 @@ class DocumentService:
         limit: int = 5
     ) -> list[dict]:
         """Search documents using vector similarity."""
-        await log_event(
-            "search",
-            f"Document search: '{query[:50]}'",
-            "info",
-            user_id=user_id
-        )
+        logger.info(f"Document search: '{query[:50]}'")
 
-        query_embedding = await self.gemini.generate_query_embedding(query)
+        gemini = get_gemini()
+        query_embedding = await gemini.generate_query_embedding(query)
 
         # Use SQLAlchemy with pgvector cosine distance
         stmt = (
@@ -151,12 +105,7 @@ class DocumentService:
         result = await self.db.execute(stmt)
         rows = result.all()
 
-        await log_event(
-            "search",
-            f"Found {len(rows)} documents",
-            "success",
-            user_id=user_id
-        )
+        logger.info(f"Found {len(rows)} documents")
 
         return [
             {
