@@ -29,9 +29,9 @@ class GeminiService:
         logger.info(f"Initializing Gemini with API key: {api_key[:10]}...")
         genai.configure(api_key=api_key)
 
-        # Use the specified model for chat/OCR
+        # Use stable model aliases for chat/OCR
         self.chat_model = genai.GenerativeModel(
-            "gemini-2.5-flash-preview-05-20",
+            "gemini-2.5-flash",
             system_instruction=self.SYSTEM_PROMPT
         )
         self.embedding_model = "gemini-embedding-001"
