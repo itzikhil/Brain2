@@ -34,7 +34,7 @@ class GeminiService:
             "gemini-2.5-flash-preview-05-20",
             system_instruction=self.SYSTEM_PROMPT
         )
-        self.embedding_model = "text-embedding-004"
+        self.embedding_model = "gemini-embedding-001"
         logger.info("GeminiService initialized successfully")
 
     def _detect_mime_type(self, file_bytes: bytes) -> str:
