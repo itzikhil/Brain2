@@ -180,6 +180,10 @@ SUMMARY:
         if current_section:
             sections[current_section] = "\n".join(current_content).strip()
 
+        # Truncate fields to match database constraints
+        sections["document_type"] = sections["document_type"][:50] if sections["document_type"] else ""
+        sections["language"] = sections["language"][:10] if sections["language"] else ""
+
         return sections
 
     async def generate_embedding(self, text: str) -> list[float]:
