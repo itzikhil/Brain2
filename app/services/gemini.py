@@ -86,19 +86,30 @@ User message: {message}"""
 
         prompt = f"""Analyze this document and perform the following:
 1. Extract ALL text visible in the document (OCR)
-2. The document is in {source_lang}
-3. Translate the extracted text to {target_lang}
+2. Identify the LANGUAGE of the document
+3. If the document is NOT in English, translate the extracted text to {target_lang}
 4. Identify the document type (letter, invoice, form, receipt, etc.)
+5. Extract the AMOUNT (total amount if it's a bill/invoice/receipt, or "none" if not applicable)
+6. Extract the SENDER (company or person who sent/issued the document, or "none" if not identifiable)
 
 Respond in this exact format:
 ORIGINAL_TEXT:
 [extracted text in original language]
 
+LANGUAGE:
+[detected language name]
+
 TRANSLATED_TEXT:
-[translated text]
+[translated text if not English, or same as original if already in English]
 
 DOCUMENT_TYPE:
 [type of document]
+
+AMOUNT:
+[total amount with currency, or "none"]
+
+SENDER:
+[company or person name, or "none"]
 
 SUMMARY:
 [brief summary of what this document is about]"""
@@ -115,8 +126,11 @@ SUMMARY:
         """Parse the structured OCR response."""
         sections = {
             "original_text": "",
+            "language": "",
             "translated_text": "",
             "document_type": "",
+            "amount": "",
+            "sender": "",
             "summary": ""
         }
 
@@ -130,6 +144,11 @@ SUMMARY:
                     sections[current_section] = "\n".join(current_content).strip()
                 current_section = "original_text"
                 current_content = []
+            elif line_stripped.startswith("LANGUAGE:"):
+                if current_section:
+                    sections[current_section] = "\n".join(current_content).strip()
+                current_section = "language"
+                current_content = []
             elif line_stripped.startswith("TRANSLATED_TEXT:"):
                 if current_section:
                     sections[current_section] = "\n".join(current_content).strip()
@@ -139,6 +158,16 @@ SUMMARY:
                 if current_section:
                     sections[current_section] = "\n".join(current_content).strip()
                 current_section = "document_type"
+                current_content = []
+            elif line_stripped.startswith("AMOUNT:"):
+                if current_section:
+                    sections[current_section] = "\n".join(current_content).strip()
+                current_section = "amount"
+                current_content = []
+            elif line_stripped.startswith("SENDER:"):
+                if current_section:
+                    sections[current_section] = "\n".join(current_content).strip()
+                current_section = "sender"
                 current_content = []
             elif line_stripped.startswith("SUMMARY:"):
                 if current_section:

@@ -259,13 +259,31 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 filename=f"telegram_{photo.file_id}.jpg"
             )
 
-        response = (
-            f"Document Processed\n\n"
-            f"Type: {result['document_type']}\n\n"
-            f"Summary: {result['summary']}\n\n"
-            f"Original (German):\n{result['original_text'][:500]}{'...' if len(result['original_text']) > 500 else ''}\n\n"
-            f"Translation (English):\n{result['translated_text'][:500]}{'...' if len(result['translated_text']) > 500 else ''}"
-        )
+        # Build response message
+        language = result.get('language', 'Unknown')
+        amount = result.get('amount', '')
+        sender = result.get('sender', '')
+
+        # Determine translation status
+        is_english = language.lower() in ['english', 'eng']
+        translation_status = "already in English" if is_english else f"translated to English"
+
+        response_lines = [
+            f"✅ Archived: {result['document_type']}",
+            f"🌐 Language: {language} ({translation_status})",
+        ]
+
+        # Add optional fields only if present
+        if amount and amount.lower() != 'none':
+            response_lines.append(f"💰 Amount: {amount}")
+
+        if sender and sender.lower() != 'none':
+            response_lines.append(f"🏢 From: {sender}")
+
+        response_lines.append(f"\nSummary: {result['summary']}")
+        response_lines.append("\nAsk me anytime to find this document.")
+
+        response = "\n".join(response_lines)
         await update.message.reply_text(response)
 
         await log_to_channel(
@@ -330,14 +348,32 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 filename=filename
             )
 
-        response = (
-            f"Document Processed\n\n"
-            f"File: {filename}\n"
-            f"Type: {result['document_type']}\n\n"
-            f"Summary: {result['summary']}\n\n"
-            f"Original (German):\n{result['original_text'][:500]}{'...' if len(result['original_text']) > 500 else ''}\n\n"
-            f"Translation (English):\n{result['translated_text'][:500]}{'...' if len(result['translated_text']) > 500 else ''}"
-        )
+        # Build response message
+        language = result.get('language', 'Unknown')
+        amount = result.get('amount', '')
+        sender = result.get('sender', '')
+
+        # Determine translation status
+        is_english = language.lower() in ['english', 'eng']
+        translation_status = "already in English" if is_english else f"translated to English"
+
+        response_lines = [
+            f"✅ Archived: {result['document_type']}",
+            f"📁 File: {filename}",
+            f"🌐 Language: {language} ({translation_status})",
+        ]
+
+        # Add optional fields only if present
+        if amount and amount.lower() != 'none':
+            response_lines.append(f"💰 Amount: {amount}")
+
+        if sender and sender.lower() != 'none':
+            response_lines.append(f"🏢 From: {sender}")
+
+        response_lines.append(f"\nSummary: {result['summary']}")
+        response_lines.append("\nAsk me anytime to find this document.")
+
+        response = "\n".join(response_lines)
         await update.message.reply_text(response)
 
         await log_to_channel(
