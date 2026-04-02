@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     gemini_api_key: str
     port: int = 8000
 
+    # Bot mode: "polling" for local development, "webhook" for Railway
+    bot_mode: str = "polling"
+
     # Logging
     log_channel_id: Optional[str] = None
 
