@@ -481,19 +481,43 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
         # Detect time-based queries for latest documents
+        # Only trigger for generic "last document" queries, not "last electricity bill"
         time_based_keywords = [
-            "last document", "latest document", "most recent", "last uploaded",
-            "newest document", "recently uploaded", "last file", "latest file",
-            "my last", "my latest", "my most recent"
+            "last document", "latest document", "most recent document",
+            "last uploaded", "newest document", "recently uploaded",
+            "last file", "latest file", "most recent file",
+            "newest file", "last upload", "latest upload"
         ]
         message_lower = message.lower()
         is_time_based = any(keyword in message_lower for keyword in time_based_keywords)
+
+        # Additional check: if there's a file retrieval intent AND specific content after "last/latest",
+        # treat it as semantic search, not time-based
+        file_retrieval_keywords = [
+            "send me", "get me", "fetch", "download", "show me", "give me",
+            "send the", "get the", "retrieve", "attach", "share the"
+        ]
+        has_file_retrieval_intent = any(keyword in message_lower for keyword in file_retrieval_keywords)
+
+        # If user says "send me my latest X" where X is not "document/file", use semantic search
+        if is_time_based and has_file_retrieval_intent:
+            # Check if they're asking for a specific type (has words after latest/last)
+            for keyword in ["last", "latest", "most recent", "newest"]:
+                if keyword in message_lower:
+                    # Find position of keyword
+                    idx = message_lower.find(keyword)
+                    after_keyword = message_lower[idx + len(keyword):].strip()
+                    # If there are specific words after (not just "document" or "file"), use semantic search
+                    if after_keyword and not after_keyword.startswith(("document", "file", "upload")):
+                        is_time_based = False
+                        logger.info(f"Time-based keyword found but specific content detected - using semantic search instead")
+                        break
 
         # Initialize search_result
         search_result = {"results": []}
 
         if is_time_based:
-            logger.info(f"Time-based query detected: '{message[:100]}'")
+            logger.info(f"Time-based query detected - using DB query for latest document: '{message[:100]}'")
             # Use direct database query for latest document
             async with get_db_context() as db:
                 doc_service = DocumentService(db)
@@ -510,8 +534,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "metadata": latest_docs[0]["metadata"]
                     }
                 ]
-                logger.info(f"Found latest document: {latest_docs[0]['document_type']} from {latest_docs[0]['created_at']}")
+                logger.info(f"Time-based path: found latest document: {latest_docs[0]['document_type']} from {latest_docs[0]['created_at']}")
         else:
+            logger.info(f"Using semantic search for query: '{message[:100]}'")
             # Search knowledge base for relevant context
             async with get_db_context() as db:
                 memory_service = MemoryService(db)
@@ -538,16 +563,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(response)
         logger.info(f"AI response sent (with context: {bool(context_str)})")
 
-        # Detect file retrieval intent (send me, get me, fetch, download, etc.)
-        file_retrieval_keywords = [
-            "send me", "get me", "fetch", "download", "show me", "give me",
-            "send the", "get the", "retrieve", "attach", "share the"
-        ]
-        message_lower = message.lower()
-        wants_file = any(keyword in message_lower for keyword in file_retrieval_keywords)
+        # Check file retrieval intent (already computed above for time-based detection)
+        wants_file = has_file_retrieval_intent
 
         if wants_file:
-            logger.info(f"File retrieval intent detected in message: '{message[:100]}'")
+            logger.info(f"File retrieval intent detected - will send files from {'time-based' if is_time_based else 'semantic'} search results")
 
         # Send back original files from R2 if user wants them
         storage = get_storage()
