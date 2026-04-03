@@ -20,6 +20,7 @@ from app.services.shopping import ShoppingService
 from app.services.memory import MemoryService
 from app.services.gemini import get_gemini
 from app.services.storage import get_storage
+from app.services.obsidian import get_obsidian
 
 logger = logging.getLogger(__name__)
 
@@ -408,6 +409,50 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Text from user {user['id']}: {message[:100]}")
 
     try:
+        # Detect "note:" or "note " prefix for Obsidian integration
+        note_patterns = [
+            r'^note:\s*(.+)$',
+            r'^note\s+(.+)$',
+        ]
+
+        for pattern in note_patterns:
+            match = re.match(pattern, message.lower())
+            if match:
+                # Extract content after "note:" or "note "
+                content_start = message.lower().find("note")
+                if ":" in message[content_start:content_start+10]:
+                    # "note:" format
+                    content = message[message.find(":", content_start) + 1:].strip()
+                else:
+                    # "note " format
+                    content = message[content_start + 4:].strip()
+
+                # Save to Obsidian
+                obsidian = get_obsidian()
+                if obsidian.enabled:
+                    try:
+                        result = await obsidian.save_note(content)
+
+                        # Also store as memory for searchability
+                        async with get_db_context() as db:
+                            memory_service = MemoryService(db)
+                            await memory_service.store_memory(
+                                user_id=user["id"],
+                                content=content,
+                                source="obsidian_note"
+                            )
+
+                        await update.message.reply_text(f"📝 Saved to Obsidian: \"{result['title']}\"")
+                        logger.info(f"Obsidian note saved: {result['filename']}")
+                        return
+                    except Exception as e:
+                        logger.error(f"Obsidian save failed: {e}")
+                        await update.message.reply_text(f"Failed to save to Obsidian: {str(e)[:100]}")
+                        return
+                else:
+                    await update.message.reply_text("Obsidian integration is not enabled. Set OBSIDIAN_VAULT_PATH in settings.")
+                    return
+
         # Detect "remember" intent naturally
         remember_patterns = [
             r'^remember\s+(.+)$',
