@@ -506,9 +506,17 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(response)
         logger.info(f"AI response sent (with context: {bool(context_str)})")
 
-        # Send back original files from R2 if available
+        # Detect file retrieval intent (send me, get me, fetch, download, etc.)
+        file_retrieval_keywords = [
+            "send me", "get me", "fetch", "download", "show me", "give me",
+            "send the", "get the", "retrieve", "attach", "share the"
+        ]
+        message_lower = message.lower()
+        wants_file = any(keyword in message_lower for keyword in file_retrieval_keywords)
+
+        # Send back original files from R2 if user wants them
         storage = get_storage()
-        if storage.enabled and search_result["results"]:
+        if wants_file and storage.enabled and search_result["results"]:
             for item in search_result["results"]:
                 # Only send documents (not memories) that have R2 keys
                 if item["source_type"] == "document" and item.get("metadata", {}).get("r2_key"):
