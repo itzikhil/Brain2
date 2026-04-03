@@ -514,13 +514,22 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message_lower = message.lower()
         wants_file = any(keyword in message_lower for keyword in file_retrieval_keywords)
 
+        if wants_file:
+            logger.info(f"File retrieval intent detected in message: '{message[:100]}'")
+
         # Send back original files from R2 if user wants them
         storage = get_storage()
         if wants_file and storage.enabled and search_result["results"]:
+            # Count documents with R2 keys
+            docs_with_r2 = [item for item in search_result["results"]
+                           if item["source_type"] == "document" and item.get("metadata", {}).get("r2_key")]
+            logger.info(f"Found {len(docs_with_r2)} document(s) with R2 keys in search results")
+
             for item in search_result["results"]:
                 # Only send documents (not memories) that have R2 keys
                 if item["source_type"] == "document" and item.get("metadata", {}).get("r2_key"):
                     r2_key = item["metadata"]["r2_key"]
+                    logger.info(f"Attempting to retrieve file from R2: {r2_key}")
                     try:
                         # Download file from R2
                         file_bytes = storage.download_file(r2_key)
@@ -540,9 +549,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 filename=filename,
                                 caption=f"📎 {item['category'] or 'Document'}"
                             )
-                            logger.info(f"Sent file from R2: {r2_key}")
+                            logger.info(f"Successfully sent file from R2: {r2_key}")
                     except Exception as e:
                         logger.error(f"Failed to send file from R2 ({r2_key}): {e}")
+        elif wants_file and search_result["results"]:
+            logger.info("File retrieval intent detected but no documents with R2 keys found in search results")
 
     except Exception as e:
         error_msg = str(e)[:200]

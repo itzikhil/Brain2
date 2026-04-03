@@ -94,12 +94,19 @@ class DocumentService:
         storage = get_storage()
         r2_key = None
         if storage.enabled:
+            logger.info(f"R2 storage enabled - uploading document: {filename or 'unnamed'}")
             r2_key = storage.upload_document(
                 file_bytes=image_bytes,
                 filename=filename or "document",
                 document_type=ocr_result["document_type"],
                 category="documents"
             )
+            if r2_key:
+                logger.info(f"Document uploaded to R2 successfully - key: {r2_key}")
+            else:
+                logger.warning(f"R2 upload returned None for {filename or 'unnamed'}")
+        else:
+            logger.info("R2 storage not enabled - skipping file upload")
 
         # Store in database using ORM
         try:

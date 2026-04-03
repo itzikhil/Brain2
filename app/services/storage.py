@@ -24,7 +24,7 @@ class StorageService:
             settings.r2_access_key_id,
             settings.r2_secret_access_key
         ]):
-            logger.warning("R2 credentials not fully configured - storage service disabled")
+            logger.info("R2 storage service disabled - credentials not configured (this is optional)")
             self.enabled = False
             self.client = None
             self.bucket_name = None
@@ -45,7 +45,7 @@ class StorageService:
             region_name="auto"
         )
 
-        logger.info(f"R2 storage initialized: bucket={self.bucket_name}")
+        logger.info(f"R2 storage service enabled - bucket: {self.bucket_name}, endpoint: {endpoint_url}")
 
     def upload_document(
         self,
@@ -86,6 +86,9 @@ class StorageService:
 
             key = f"{category_prefix}/{year}/{date_str}_{document_type}_{safe_filename}"
 
+            # Log upload attempt
+            logger.info(f"Attempting R2 upload: {key} ({len(file_bytes)} bytes)")
+
             # Upload to R2
             self.client.put_object(
                 Bucket=self.bucket_name,
@@ -94,11 +97,11 @@ class StorageService:
                 ContentType=self._get_content_type(filename)
             )
 
-            logger.info(f"Uploaded to R2: {key} ({len(file_bytes)} bytes)")
+            logger.info(f"R2 upload successful: {key}")
             return key
 
         except Exception as e:
-            logger.error(f"R2 upload failed: {e}")
+            logger.error(f"R2 upload failed for {filename}: {e}")
             return None
 
     def get_presigned_url(self, key: str, expires_in: int = 3600) -> Optional[str]:
