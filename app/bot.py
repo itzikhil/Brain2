@@ -480,17 +480,49 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.info(f"Stored memory: {result['id'][:8]}")
                 return
 
-        # Search knowledge base for relevant context
-        context_str = None
-        async with get_db_context() as db:
-            memory_service = MemoryService(db)
-            search_result = await memory_service.associative_search(
-                user_id=user["id"],
-                query=message,
-                limit=3
-            )
+        # Detect time-based queries for latest documents
+        time_based_keywords = [
+            "last document", "latest document", "most recent", "last uploaded",
+            "newest document", "recently uploaded", "last file", "latest file",
+            "my last", "my latest", "my most recent"
+        ]
+        message_lower = message.lower()
+        is_time_based = any(keyword in message_lower for keyword in time_based_keywords)
+
+        # Initialize search_result
+        search_result = {"results": []}
+
+        if is_time_based:
+            logger.info(f"Time-based query detected: '{message[:100]}'")
+            # Use direct database query for latest document
+            async with get_db_context() as db:
+                doc_service = DocumentService(db)
+                latest_docs = await doc_service.get_latest_document(user_id=user["id"], limit=1)
+
+            if latest_docs:
+                # Convert to search_result format
+                search_result["results"] = [
+                    {
+                        "source_type": "document",
+                        "content": f"{latest_docs[0]['original_text']}\n\n{latest_docs[0]['translated_text']}",
+                        "similarity": 1.0,  # Perfect match since it's the latest
+                        "category": None,
+                        "metadata": latest_docs[0]["metadata"]
+                    }
+                ]
+                logger.info(f"Found latest document: {latest_docs[0]['document_type']} from {latest_docs[0]['created_at']}")
+        else:
+            # Search knowledge base for relevant context
+            async with get_db_context() as db:
+                memory_service = MemoryService(db)
+                search_result = await memory_service.associative_search(
+                    user_id=user["id"],
+                    query=message,
+                    limit=3
+                )
 
         # Build context string from relevant results
+        context_str = None
         if search_result["results"]:
             context_parts = []
             for item in search_result["results"]:

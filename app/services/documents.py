@@ -226,3 +226,41 @@ class DocumentService:
             "metadata": doc.doc_metadata,
             "created_at": doc.created_at
         }
+
+    async def get_latest_document(self, user_id: int, limit: int = 1) -> list[dict]:
+        """
+        Get the most recent document(s) for a user.
+
+        Args:
+            user_id: The user ID
+            limit: Number of documents to return (default: 1)
+
+        Returns:
+            List of documents ordered by created_at DESC
+        """
+        logger.info(f"Fetching latest {limit} document(s) for user {user_id}")
+
+        stmt = (
+            select(Document)
+            .where(Document.user_id == user_id)
+            .order_by(Document.created_at.desc())
+            .limit(limit)
+        )
+
+        result = await self.db.execute(stmt)
+        docs = result.scalars().all()
+
+        logger.info(f"Found {len(docs)} latest document(s)")
+
+        return [
+            {
+                "id": str(doc.id),
+                "original_text": doc.original_text,
+                "translated_text": doc.translated_text,
+                "document_type": doc.file_type,
+                "metadata": doc.doc_metadata,
+                "created_at": doc.created_at,
+                "filename": doc.filename
+            }
+            for doc in docs
+        ]
