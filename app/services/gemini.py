@@ -7,6 +7,7 @@ import base64
 from app.config import get_settings
 from app.services.privacy import classify_privacy
 from app.services.ollama import get_ollama
+from app.services.openrouter import get_openrouter
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +17,7 @@ _gemini_instance: Optional["GeminiService"] = None
 class GeminiService:
     """Singleton service for Google Gemini AI."""
 
-    SYSTEM_PROMPT = "You are Brain, a personal assistant. The user is based in Germany."
+    SYSTEM_PROMPT = "You are Brain, a personal AI assistant for Itzik. Be concise and direct. Only answer what is asked. If the user shares information without asking a question, acknowledge it briefly — do not lecture, explain back, or dump unsolicited information. Keep responses short unless detail is specifically requested. You understand German and English."
 
     def __init__(self):
         settings = get_settings()
@@ -76,7 +77,17 @@ class GeminiService:
             else:
                 logger.warning("🔒 Message is private but Ollama unavailable — falling back to Gemini")
 
-        logger.info("☁️ Using Gemini (safe)")
+        # Try OpenRouter first for S1 messages
+        openrouter = get_openrouter()
+        if openrouter.is_available():
+            try:
+                logger.info("☁️ Using OpenRouter (qwen3.6-plus)")
+                response = await openrouter.chat(message, context=context or "")
+                return response, "cloud"
+            except Exception as e:
+                logger.warning(f"☁️ OpenRouter failed, falling back to Gemini: {e}")
+
+        logger.info("☁️ Using Gemini (fallback)")
 
         if context:
             prompt = f"""Context from knowledge base:

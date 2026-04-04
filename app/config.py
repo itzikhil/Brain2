@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     r2_secret_access_key: Optional[str] = None
     r2_bucket_name: str = "brain2-docs"
 
+    # OpenRouter (optional - primary cloud model)
+    openrouter_api_key: str = ""
+
     # Obsidian vault integration (optional)
     obsidian_vault_path: Optional[str] = None
 
