@@ -558,10 +558,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Get AI response with context
         gemini = get_gemini()
-        response = await gemini.chat(message, context=context_str)
+        response, model_used = await gemini.chat(message, context=context_str)
 
-        await update.message.reply_text(response)
-        logger.info(f"AI response sent (with context: {bool(context_str)})")
+        model_icon = "🔒" if model_used == "local" else "☁️"
+        await update.message.reply_text(f"{model_icon} {response}")
+        logger.info(f"AI response sent (model: {model_used}, with context: {bool(context_str)})")
 
         # Check file retrieval intent (already computed above for time-based detection)
         wants_file = has_file_retrieval_intent

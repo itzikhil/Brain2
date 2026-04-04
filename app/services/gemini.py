@@ -1,10 +1,12 @@
-"""Gemini AI service with singleton pattern."""
+"""Gemini AI service with singleton pattern and privacy-aware routing."""
 import logging
 import google.generativeai as genai
 from typing import Optional
 import base64
 
 from app.config import get_settings
+from app.services.privacy import classify_privacy
+from app.services.ollama import get_ollama
 
 logger = logging.getLogger(__name__)
 
@@ -52,17 +54,30 @@ class GeminiService:
         else:
             return "image/jpeg"  # Default fallback
 
-    async def chat(self, message: str, context: Optional[str] = None) -> str:
+    async def chat(self, message: str, context: Optional[str] = None) -> tuple[str, str]:
         """
-        Send a message to Gemini and get a response.
+        Send a message to the appropriate model based on privacy classification.
 
         Args:
             message: The user's message
             context: Optional context from knowledge base to include
 
         Returns:
-            The AI's response
+            Tuple of (response text, model indicator: "local" or "cloud")
         """
+        privacy_level = classify_privacy(message)
+
+        if privacy_level == "S3":
+            ollama = get_ollama()
+            if await ollama.is_available():
+                logger.info("🔒 Using local model (private)")
+                response = await ollama.chat(message, context=context or "")
+                return response, "local"
+            else:
+                logger.warning("🔒 Message is private but Ollama unavailable — falling back to Gemini")
+
+        logger.info("☁️ Using Gemini (safe)")
+
         if context:
             prompt = f"""Context from knowledge base:
 {context}
@@ -72,7 +87,7 @@ User message: {message}"""
             prompt = message
 
         response = await self.chat_model.generate_content_async(prompt)
-        return response.text
+        return response.text, "cloud"
 
     async def ocr_and_translate(
         self,
