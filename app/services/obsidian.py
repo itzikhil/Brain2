@@ -59,7 +59,7 @@ TITLE:
 TAGS:
 [tag1, tag2, tag3]"""
 
-            response = await gemini.chat(prompt)
+            response, _model_used = await gemini.chat(prompt)
             parsed = self._parse_gemini_response(response)
             title = parsed["title"]
             tags = parsed["tags"]

@@ -29,12 +29,16 @@ class OllamaService:
         except Exception:
             return False
 
-    async def chat(self, message: str, context: str = "") -> str:
+    DEFAULT_SYSTEM_PROMPT = "You are Brain, a personal AI assistant. Rules: 1) Be extremely concise. 2) If the user states a fact without asking a question, reply in ONE sentence acknowledging it. 3) Never list options or suggest next steps unless asked. 4) Never repeat information back to the user. 5) Keep all responses under 3 sentences unless the user explicitly asks for detail."
+
+    async def chat(self, message: str, context: str = "", model: str | None = None, system_prompt: str | None = None) -> str:
         """Send a message to the local Ollama model.
 
         Args:
             message: The user's message
             context: Optional context from knowledge base
+            model: Optional model override (uses default if None)
+            system_prompt: Optional system prompt override
 
         Returns:
             The model's response text
@@ -47,13 +51,14 @@ User message: {message}"""
         else:
             prompt = message
 
-        system = "You are Brain, a personal assistant. The user is based in Germany."
+        system = system_prompt or self.DEFAULT_SYSTEM_PROMPT
+        use_model = model or self.model
 
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(
                 f"{self.base_url}/api/chat",
                 json={
-                    "model": self.model,
+                    "model": use_model,
                     "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": prompt},

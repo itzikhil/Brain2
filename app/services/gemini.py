@@ -55,17 +55,33 @@ class GeminiService:
         else:
             return "image/jpeg"  # Default fallback
 
-    async def chat(self, message: str, context: Optional[str] = None) -> tuple[str, str]:
+    async def chat(self, message: str, context: Optional[str] = None, model_override: Optional[str] = None) -> tuple[str, str]:
         """
         Send a message to the appropriate model based on privacy classification.
 
         Args:
             message: The user's message
             context: Optional context from knowledge base to include
+            model_override: Optional dict with 'model' and optionally 'system_prompt' and 'icon' for /model overrides
 
         Returns:
-            Tuple of (response text, model indicator: "local" or "cloud")
+            Tuple of (response text, model indicator: "local", "cloud", or custom)
         """
+        # If user has a model override, route directly to Ollama
+        if model_override:
+            ollama = get_ollama()
+            if await ollama.is_available():
+                logger.info(f"🔧 Using model override: {model_override['model']}")
+                response = await ollama.chat(
+                    message,
+                    context=context or "",
+                    model=model_override["model"],
+                    system_prompt=model_override.get("system_prompt"),
+                )
+                return response, model_override.get("indicator", "local")
+            else:
+                logger.warning("Model override requested but Ollama unavailable — falling back to default routing")
+
         privacy_level = classify_privacy(message)
 
         if privacy_level == "S3":
