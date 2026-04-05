@@ -31,6 +31,10 @@ async def run_polling():
     await application.start()
     logger.info("Bot started - listening for updates via polling...")
 
+    # Start scheduler for daily briefing
+    from app.services.scheduler import setup_scheduler
+    setup_scheduler(application)
+
     # Run polling
     await application.updater.start_polling(
         allowed_updates=["message", "edited_message", "callback_query"]

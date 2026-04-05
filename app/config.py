@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     # OpenRouter (optional - primary cloud model)
     openrouter_api_key: str = ""
 
+    # Morning briefing
+    telegram_owner_id: Optional[str] = None
+    openweather_api_key: Optional[str] = None
+    newsapi_key: Optional[str] = None
+
     # Obsidian vault integration (optional)
     obsidian_vault_path: Optional[str] = None
 

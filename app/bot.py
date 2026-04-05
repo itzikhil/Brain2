@@ -21,6 +21,7 @@ from app.services.memory import MemoryService
 from app.services.gemini import get_gemini
 from app.services.storage import get_storage
 from app.services.obsidian import get_obsidian
+from app.services.briefing import get_morning_briefing
 
 logger = logging.getLogger(__name__)
 
@@ -300,6 +301,17 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     model_info = AVAILABLE_MODELS[choice]
     user_model_overrides[chat_id] = model_info
     await update.message.reply_text(f"{model_info['icon']} Switched to **{choice}** ({model_info['model']})", parse_mode="Markdown")
+
+
+async def briefing_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /briefing command — send the morning briefing immediately."""
+    await update.message.reply_text("Fetching your briefing...")
+    try:
+        text = await get_morning_briefing()
+        await update.message.reply_text(text)
+    except Exception as e:
+        logger.error(f"Briefing error: {e}")
+        await update.message.reply_text(f"Error generating briefing: {str(e)[:200]}")
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -710,6 +722,7 @@ def create_bot_application() -> Application:
     application.add_handler(CommandHandler("done", done_command))
     application.add_handler(CommandHandler("clear", clear_command))
     application.add_handler(CommandHandler("model", model_command))
+    application.add_handler(CommandHandler("briefing", briefing_command))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))

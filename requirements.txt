@@ -27,3 +27,6 @@ python-multipart>=0.0.9
 pydantic>=2.6.0
 pydantic-settings>=2.1.0
 numpy>=1.26.0
+
+# Scheduler
+apscheduler>=3.10.0
