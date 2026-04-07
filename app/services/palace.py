@@ -94,9 +94,12 @@ def _search_sync(query: str, n_results: int) -> str:
     try:
         import chromadb
         palace_path = _get_palace_path()
+        logger.info(f"MemPalace search: palace={palace_path}, query='{query[:80]}'")
         client = chromadb.PersistentClient(path=palace_path)
         col = client.get_collection("mempalace_drawers")
-    except Exception:
+        logger.info(f"MemPalace search: collection='{col.name}', count={col.count()}")
+    except Exception as e:
+        logger.error(f"MemPalace collection error: {e}")
         return ""
 
     try:
@@ -105,10 +108,12 @@ def _search_sync(query: str, n_results: int) -> str:
             n_results=n_results,
             include=["documents", "metadatas", "distances"],
         )
-    except Exception:
+    except Exception as e:
+        logger.error(f"MemPalace query error: {e}")
         return ""
 
     docs = results["documents"][0]
+    metas = results["metadatas"][0]
     dists = results["distances"][0]
 
     if not docs:
@@ -116,15 +121,15 @@ def _search_sync(query: str, n_results: int) -> str:
         return ""
 
     logger.info(f"MemPalace search: {len(docs)} results, distances: {[round(d, 3) for d in dists]}")
+    for i, (meta, dist) in enumerate(zip(metas, dists)):
+        logger.info(f"  [{i}] dist={round(dist, 3)} wing={meta.get('wing','?')} room={meta.get('room','?')} src={meta.get('source_file','?')}")
 
+    # Return top results regardless of distance — better to show slightly
+    # irrelevant context than to miss good matches. The AI model can ignore
+    # irrelevant context on its own.
     parts = []
     for doc, dist in zip(docs, dists):
-        # ChromaDB returns distances (lower = better match).
-        # Keep results with distance < 1.5; skip poor matches.
-        if dist > 1.5:
-            continue
-        relevance = round(max(0, 1 - dist), 2) if dist >= 0 else round(min(1, abs(dist)), 2)
-        parts.append(f"[Memory, relevance: {relevance}]\n{doc[:400]}")
+        parts.append(f"[Memory, dist: {round(dist, 3)}]\n{doc[:400]}")
 
     if not parts:
         return ""
