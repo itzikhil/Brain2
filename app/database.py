@@ -170,6 +170,20 @@ async def init_db():
                 );
             """))
 
+            # Create user_facts table
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS user_facts (
+                    id SERIAL PRIMARY KEY,
+                    category TEXT NOT NULL DEFAULT 'personal',
+                    fact TEXT NOT NULL,
+                    source_message TEXT,
+                    confidence FLOAT DEFAULT 0.8,
+                    active BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """))
+
             # Create indexes
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id);"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_documents_user_id ON documents(user_id);"))
@@ -178,10 +192,28 @@ async def init_db():
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_memories_user_id ON memories(user_id);"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(user_id, category);"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_conversation_states_user_id ON conversation_states(user_id);"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_facts_category ON user_facts(category, active);"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_facts_active ON user_facts(active);"))
 
             logger.info("Database tables created successfully!")
         else:
             logger.info("Database tables already exist.")
+
+        # Always run migrations for new tables (safe with IF NOT EXISTS)
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS user_facts (
+                id SERIAL PRIMARY KEY,
+                category TEXT NOT NULL DEFAULT 'personal',
+                fact TEXT NOT NULL,
+                source_message TEXT,
+                confidence FLOAT DEFAULT 0.8,
+                active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_facts_category ON user_facts(category, active);"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_facts_active ON user_facts(active);"))
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

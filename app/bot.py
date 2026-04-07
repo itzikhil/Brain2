@@ -1,4 +1,5 @@
 """Telegram bot with conversational AI agent."""
+import asyncio
 import logging
 import traceback
 import re
@@ -22,6 +23,8 @@ from app.services.gemini import get_gemini
 from app.services.storage import get_storage
 from app.services.obsidian import get_obsidian
 from app.services.briefing import get_morning_briefing
+from app.services.memory_extractor import extract_facts
+from app.services.user_profile import store_fact, get_profile_summary, get_relevant_facts, forget_fact
 
 logger = logging.getLogger(__name__)
 
@@ -312,6 +315,34 @@ async def briefing_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Briefing error: {e}")
         await update.message.reply_text(f"Error generating briefing: {str(e)[:200]}")
+
+
+async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /profile command — show all known facts about the user."""
+    try:
+        summary = await get_profile_summary()
+        await update.message.reply_text(summary)
+    except Exception as e:
+        logger.error(f"Profile error: {e}")
+        await update.message.reply_text(f"Error loading profile: {str(e)[:200]}")
+
+
+async def forget_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /forget command — deactivate matching facts."""
+    if not context.args:
+        await update.message.reply_text("Usage: /forget <text to forget>\nExample: /forget my birthday")
+        return
+
+    fact_text = " ".join(context.args)
+    try:
+        count = await forget_fact(fact_text)
+        if count:
+            await update.message.reply_text(f"Done — forgot {count} fact(s) matching \"{fact_text}\".")
+        else:
+            await update.message.reply_text(f"No facts found matching \"{fact_text}\".")
+    except Exception as e:
+        logger.error(f"Forget error: {e}")
+        await update.message.reply_text(f"Error: {str(e)[:200]}")
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -639,6 +670,18 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context_str = "\n\n---\n\n".join(context_parts)
             logger.info(f"Found {len(search_result['results'])} relevant items (top: {search_result['results'][0]['similarity']:.0%})")
 
+        # Inject relevant user profile facts into context
+        try:
+            user_facts = await get_relevant_facts(message)
+            if user_facts:
+                if context_str:
+                    context_str = f"{user_facts}\n\n{context_str}"
+                else:
+                    context_str = user_facts
+                logger.info("Injected relevant user facts into context")
+        except Exception as e:
+            logger.error(f"Failed to get relevant facts: {e}")
+
         # Get AI response with context
         gemini = get_gemini()
         chat_id = update.effective_chat.id
@@ -651,6 +694,24 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             model_icon = "🔒" if model_used == "local" else "☁️"
         await update.message.reply_text(f"{model_icon} {response}")
         logger.info(f"AI response sent (model: {model_used}, with context: {bool(context_str)})")
+
+        # Extract facts from conversation in the background (don't slow down the response)
+        async def _background_extract():
+            try:
+                facts = await extract_facts(message, response)
+                for fact in facts:
+                    is_new = await store_fact(
+                        category=fact["category"],
+                        fact=fact["fact"],
+                        source_message=message[:500],
+                        confidence=fact["confidence"],
+                    )
+                    if is_new:
+                        logger.info(f"📝 Learned: [{fact['category']}] {fact['fact'][:80]}")
+            except Exception as e:
+                logger.error(f"Background fact extraction failed: {e}")
+
+        asyncio.create_task(_background_extract())
 
         # Check file retrieval intent (already computed above for time-based detection)
         wants_file = has_file_retrieval_intent
@@ -723,6 +784,8 @@ def create_bot_application() -> Application:
     application.add_handler(CommandHandler("clear", clear_command))
     application.add_handler(CommandHandler("model", model_command))
     application.add_handler(CommandHandler("briefing", briefing_command))
+    application.add_handler(CommandHandler("profile", profile_command))
+    application.add_handler(CommandHandler("forget", forget_command))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
