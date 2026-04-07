@@ -1,0 +1,24 @@
+# OwnPilot Configuration
+
+# ===========================================
+# Server
+# ===========================================
+PORT=8080
+UI_PORT=5173
+HOST=127.0.0.1
+NODE_ENV=development
+
+# ===========================================
+# Database (PostgreSQL via Neon)
+# ===========================================
+DATABASE_URL=postgresql://neondb_owner:npg_wTG5uP7SoeWA@ep-weathered-heart-alvrm0px-pooler.eu-central-1.aws.neon.tech/neondb?sslmode=require
+
+# ===========================================
+# Authentication
+# ===========================================
+AUTH_TYPE=none
+
+# ===========================================
+# Logging
+# ===========================================
+LOG_LEVEL=info

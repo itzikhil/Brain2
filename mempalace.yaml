@@ -1,0 +1,8 @@
+wing: brain2
+rooms:
+- name: app
+  description: Files from app/
+- name: backend
+  description: Files from models/
+- name: general
+  description: Files that don't fit other rooms
