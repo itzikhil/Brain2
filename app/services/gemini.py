@@ -90,13 +90,13 @@ class GeminiService:
             else:
                 logger.warning("Model override requested but Ollama unavailable — falling back to default routing")
 
-        # 2. Privacy check — S3 must stay local
+        # 2. Privacy check — S3 must stay local (use 26B for better quality)
         privacy_level = classify_privacy(message)
         if privacy_level == "S3":
             ollama = get_ollama()
             if await ollama.is_available():
-                logger.info("🔒 Using local model (private)")
-                response = await ollama.chat(message, context=context or "")
+                logger.info("🔒 Using local 26B model (private)")
+                response = await ollama.chat(message, context=context or "", model="gemma4:26b")
                 return response, "private"
             else:
                 logger.warning("🔒 Message is private but Ollama unavailable — falling back to cloud")
