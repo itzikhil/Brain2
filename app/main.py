@@ -55,12 +55,18 @@ async def webhook(request: Request):
 
             from app.database import init_db
             await init_db()
+
+            from app.services.reminders import init_reminders_table
+            await init_reminders_table()
             logger.info("Database ready")
 
             from app.bot import create_bot_application
             _bot = create_bot_application()
             await _bot.initialize()
             await _bot.start()
+
+            from app.services.scheduler import setup_scheduler
+            setup_scheduler(_bot)
             logger.info("Bot ready")
 
             _ready = True
@@ -92,10 +98,16 @@ async def set_webhook(webhook_url: str):
             from app.database import init_db
             await init_db()
 
+            from app.services.reminders import init_reminders_table
+            await init_reminders_table()
+
             from app.bot import create_bot_application
             _bot = create_bot_application()
             await _bot.initialize()
             await _bot.start()
+
+            from app.services.scheduler import setup_scheduler
+            setup_scheduler(_bot)
             _ready = True
 
         await _bot.bot.set_webhook(

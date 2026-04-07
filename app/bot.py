@@ -29,6 +29,8 @@ from app.services.memory_extractor import extract_facts
 from app.services.user_profile import store_fact, get_profile_summary, get_relevant_facts, forget_fact
 from app.services.palace import store_conversation, search_memory
 from app.services.voice import transcribe_voice
+from app.services.reminder_parser import parse_reminder
+from app.services.reminders import add_reminder, list_reminders, delete_reminder
 
 logger = logging.getLogger(__name__)
 
@@ -349,6 +351,49 @@ async def forget_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Error: {str(e)[:200]}")
 
 
+async def reminders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /reminders command — list active reminders."""
+    chat_id = update.effective_chat.id
+    try:
+        reminders = await list_reminders(chat_id)
+        if not reminders:
+            await update.message.reply_text("No active reminders.")
+            return
+
+        lines = ["⏰ Your reminders:\n"]
+        for r in reminders:
+            time_str = r["remind_at"].strftime("%b %d, %H:%M")
+            lines.append(f"  #{r['id']} — {r['text']} ({time_str})")
+        lines.append("\nUse /cancel <id> to remove one.")
+        await update.message.reply_text("\n".join(lines))
+    except Exception as e:
+        logger.error(f"Reminders list error: {e}")
+        await update.message.reply_text(f"Error listing reminders: {str(e)[:200]}")
+
+
+async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /cancel <id> command — delete a reminder."""
+    if not context.args:
+        await update.message.reply_text("Usage: /cancel <id>\nUse /reminders to see IDs.")
+        return
+
+    try:
+        reminder_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Invalid ID. Use /reminders to see your reminder IDs.")
+        return
+
+    try:
+        deleted = await delete_reminder(reminder_id)
+        if deleted:
+            await update.message.reply_text(f"Reminder #{reminder_id} cancelled.")
+        else:
+            await update.message.reply_text(f"Reminder #{reminder_id} not found or already fired.")
+    except Exception as e:
+        logger.error(f"Cancel reminder error: {e}")
+        await update.message.reply_text(f"Error: {str(e)[:200]}")
+
+
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle photo messages for OCR."""
     user = await get_user(update)
@@ -574,6 +619,19 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE, us
                 else:
                     await update.message.reply_text("Obsidian integration is not enabled. Set OBSIDIAN_VAULT_PATH in settings.")
                     return
+
+        # Detect reminder intent (before "remember" to avoid conflict)
+        reminder_keywords = ["remind me", "reminder", "set reminder", "תזכיר לי", "erinnere mich"]
+        if any(kw in message.lower() for kw in reminder_keywords):
+            parsed = parse_reminder(message)
+            if parsed:
+                reminder_text, remind_at = parsed
+                chat_id = update.effective_chat.id
+                rid = await add_reminder(chat_id, reminder_text, remind_at)
+                time_str = remind_at.strftime("%b %d, %H:%M")
+                await update.message.reply_text(f"⏰ Reminder set: {reminder_text} at {time_str}\n(#{rid})")
+                logger.info(f"Reminder #{rid} set for {remind_at}")
+                return
 
         # Detect "remember" intent naturally
         remember_patterns = [
@@ -880,6 +938,8 @@ def create_bot_application() -> Application:
     application.add_handler(CommandHandler("briefing", briefing_command))
     application.add_handler(CommandHandler("profile", profile_command))
     application.add_handler(CommandHandler("forget", forget_command))
+    application.add_handler(CommandHandler("reminders", reminders_command))
+    application.add_handler(CommandHandler("cancel", cancel_command))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     application.add_handler(MessageHandler(filters.VOICE, handle_voice))
