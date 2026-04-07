@@ -130,8 +130,9 @@ class GeminiService:
         logger.info("☁️ Using Gemini (fallback)")
 
         if context:
-            prompt = f"""Context from knowledge base:
-{context}
+            prompt = f"""You may use the following context if relevant, but always try to answer the user's question even if the context doesn't help:
+
+Context: {context}
 
 User message: {message}"""
         else:

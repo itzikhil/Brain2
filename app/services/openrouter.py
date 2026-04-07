@@ -46,7 +46,7 @@ class OpenRouterService:
             The model's response text
         """
         if context:
-            prompt = f"Context from knowledge base:\n{context}\n\nUser message: {message}"
+            prompt = f"You may use the following context if relevant, but always try to answer the user's question even if the context doesn't help:\n\nContext: {context}\n\nUser message: {message}"
         else:
             prompt = message
 
