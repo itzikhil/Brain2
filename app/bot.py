@@ -688,7 +688,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             palace_context = await search_memory(message)
             if palace_context:
                 if context_str:
-                    context_str = f"{context_str}\n\nPast conversations:\n{palace_context}"
+                    context_str = f"Past conversations:\n{palace_context}\n\nDocuments:\n{context_str}"
                 else:
                     context_str = f"Past conversations:\n{palace_context}"
                 logger.info("Injected MemPalace conversation memory into context")
