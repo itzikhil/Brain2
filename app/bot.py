@@ -515,15 +515,19 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle regular text messages — delegates to process_message."""
+    user = await get_user(update)
+    message = update.message.text
+    await process_message(update, context, user, message)
+
+
+async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE, user: dict, message: str):
     """
-    Handle regular text messages with conversational AI.
+    Core message processing logic used by both text and voice handlers.
 
     Detects "remember X" naturally, searches knowledge base,
     and provides natural responses with context.
     """
-    user = await get_user(update)
-    message = update.message.text
-
     logger.info(f"Text from user {user['id']}: {message[:100]}")
 
     try:
@@ -843,9 +847,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "success"
         )
 
-        # Inject the transcribed text as if the user typed it, then reuse handle_text
-        update.message.text = text
-        await handle_text(update, context)
+        # Process the transcribed text through the same pipeline as typed messages
+        await process_message(update, context, user, text)
 
     except Exception as e:
         error_msg = str(e)[:300]
