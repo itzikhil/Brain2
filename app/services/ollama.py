@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 _ollama_instance: Optional["OllamaService"] = None
 
 OLLAMA_BASE_URL = "http://localhost:11434"
-OLLAMA_MODEL = "gemma4"
+OLLAMA_MODEL = "gemma4:26b"
 
 
 class OllamaService:

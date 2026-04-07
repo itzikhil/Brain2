@@ -95,8 +95,8 @@ class GeminiService:
         if privacy_level == "S3":
             ollama = get_ollama()
             if await ollama.is_available():
-                logger.info("🔒 Using local 26B model (private)")
-                response = await ollama.chat(message, context=context or "", model="gemma4:26b")
+                logger.info("🔒 Using local model (private)")
+                response = await ollama.chat(message, context=context or "")
                 return response, "private"
             else:
                 logger.warning("🔒 Message is private but Ollama unavailable — falling back to cloud")
