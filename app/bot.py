@@ -25,6 +25,7 @@ from app.services.obsidian import get_obsidian
 from app.services.briefing import get_morning_briefing
 from app.services.memory_extractor import extract_facts
 from app.services.user_profile import store_fact, get_profile_summary, get_relevant_facts, forget_fact
+from app.services.palace import store_conversation, search_memory
 
 logger = logging.getLogger(__name__)
 
@@ -682,6 +683,18 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Failed to get relevant facts: {e}")
 
+        # Search MemPalace for relevant conversation memories
+        try:
+            palace_context = await search_memory(message)
+            if palace_context:
+                if context_str:
+                    context_str = f"{context_str}\n\nPast conversations:\n{palace_context}"
+                else:
+                    context_str = f"Past conversations:\n{palace_context}"
+                logger.info("Injected MemPalace conversation memory into context")
+        except Exception as e:
+            logger.error(f"MemPalace search failed: {e}")
+
         # Get AI response with context
         gemini = get_gemini()
         chat_id = update.effective_chat.id
@@ -708,8 +721,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"{model_icon} {response}")
         logger.info(f"AI response sent (model: {model_used}, with context: {bool(context_str)})")
 
-        # Extract facts from conversation in the background (don't slow down the response)
-        async def _background_extract():
+        # Background tasks: store conversation + extract facts (don't slow down the response)
+        async def _background_tasks():
+            try:
+                await store_conversation(message, response)
+            except Exception as e:
+                logger.error(f"Background conversation storage failed: {e}")
+
             try:
                 facts = await extract_facts(message, response)
                 for fact in facts:
@@ -724,7 +742,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.error(f"Background fact extraction failed: {e}")
 
-        asyncio.create_task(_background_extract())
+        asyncio.create_task(_background_tasks())
 
         # Check file retrieval intent (already computed above for time-based detection)
         wants_file = has_file_retrieval_intent

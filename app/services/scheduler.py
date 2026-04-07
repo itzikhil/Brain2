@@ -1,11 +1,13 @@
-"""APScheduler setup for daily morning briefing."""
+"""APScheduler setup for daily morning briefing and periodic tasks."""
 import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from app.config import get_settings
 from app.services.briefing import get_morning_briefing
+from app.services.palace import run_scheduled_mine
 
 logger = logging.getLogger(__name__)
 
@@ -48,5 +50,13 @@ def setup_scheduler(application):
         name="Daily morning briefing",
         replace_existing=True,
     )
+    _scheduler.add_job(
+        run_scheduled_mine,
+        trigger=IntervalTrigger(minutes=30),
+        id="mempalace_mine",
+        name="MemPalace conversation mining",
+        replace_existing=True,
+    )
+
     _scheduler.start()
-    logger.info("Scheduler started — morning briefing at 07:30 Europe/Berlin")
+    logger.info("Scheduler started — morning briefing at 07:30, MemPalace mining every 30m")
