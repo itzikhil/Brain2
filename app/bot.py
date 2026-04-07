@@ -1,6 +1,8 @@
 """Telegram bot with conversational AI agent."""
 import asyncio
 import logging
+import os
+import tempfile
 import traceback
 import re
 from datetime import datetime
@@ -26,6 +28,7 @@ from app.services.briefing import get_morning_briefing
 from app.services.memory_extractor import extract_facts
 from app.services.user_profile import store_fact, get_profile_summary, get_relevant_facts, forget_fact
 from app.services.palace import store_conversation, search_memory
+from app.services.voice import transcribe_voice
 
 logger = logging.getLogger(__name__)
 
@@ -801,6 +804,63 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Sorry, I encountered an error: {error_msg}")
 
 
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle voice messages — transcribe with Whisper, then process as text."""
+    user = await get_user(update)
+    voice = update.message.voice
+
+    await log_to_channel(
+        context.bot,
+        f"🎤 *Voice Message Received*\nUser: `{user['id']}` (@{update.effective_user.username or 'N/A'})\nDuration: {voice.duration}s",
+        "pending"
+    )
+
+    tmp_path = None
+    try:
+        # Download the .ogg file to a temp path
+        file = await context.bot.get_file(voice.file_id)
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".ogg")
+        os.close(tmp_fd)
+        await file.download_to_drive(tmp_path)
+
+        logger.info(f"Voice downloaded: {voice.duration}s, file_id={voice.file_id}")
+
+        # Transcribe
+        text, language = transcribe_voice(tmp_path)
+
+        if not text.strip():
+            await update.message.reply_text("🎤 Couldn't make out any words. Try again?")
+            return
+
+        logger.info(f"Transcribed ({language}): {text[:100]}")
+
+        # Confirm what we heard
+        await update.message.reply_text(f"🎤 Heard: {text}")
+
+        await log_to_channel(
+            context.bot,
+            f"🎤 *Voice Transcribed*\nUser: `{user['id']}`\nLang: `{language}`\nText: `{text[:200]}`",
+            "success"
+        )
+
+        # Inject the transcribed text as if the user typed it, then reuse handle_text
+        update.message.text = text
+        await handle_text(update, context)
+
+    except Exception as e:
+        error_msg = str(e)[:300]
+        logger.error(f"Voice handling error: {e}\n{traceback.format_exc()}")
+        await log_to_channel(
+            context.bot,
+            f"*Voice Handling FAILED*\nUser: `{user['id']}`\nError: `{error_msg}`",
+            "error"
+        )
+        await update.message.reply_text(f"Error processing voice message: {error_msg}")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
 def create_bot_application() -> Application:
     """Create and configure the Telegram bot application."""
     settings = get_cached_settings()
@@ -819,6 +879,7 @@ def create_bot_application() -> Application:
     application.add_handler(CommandHandler("forget", forget_command))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    application.add_handler(MessageHandler(filters.VOICE, handle_voice))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     return application

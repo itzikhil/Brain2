@@ -30,3 +30,6 @@ numpy>=1.26.0
 
 # Scheduler
 apscheduler>=3.10.0
+
+# Voice transcription
+faster-whisper>=1.0.0
