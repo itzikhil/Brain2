@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # OpenRouter (optional - primary cloud model)
     openrouter_api_key: str = ""
 
+    # Groq (optional - cloud speech-to-text)
+    groq_api_key: str = ""
+
     # Morning briefing
     telegram_owner_id: Optional[str] = None
     openweather_api_key: Optional[str] = None

@@ -830,7 +830,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Voice downloaded: {voice.duration}s, file_id={voice.file_id}")
 
         # Transcribe
-        text, language = transcribe_voice(tmp_path)
+        text, language = await transcribe_voice(tmp_path)
 
         if not text.strip():
             await update.message.reply_text("🎤 Couldn't make out any words. Try again?")
