@@ -1,11 +1,11 @@
-"""Gemini AI service with singleton pattern and privacy-aware routing."""
+"""Gemini AI service with singleton pattern and smart routing."""
 import logging
 import google.generativeai as genai
 from typing import Optional
 import base64
 
 from app.config import get_settings
-from app.services.privacy import classify_privacy
+from app.services.router import classify_privacy, classify_complexity
 from app.services.ollama import get_ollama
 from app.services.openrouter import get_openrouter
 
@@ -55,19 +55,27 @@ class GeminiService:
         else:
             return "image/jpeg"  # Default fallback
 
-    async def chat(self, message: str, context: Optional[str] = None, model_override: Optional[str] = None) -> tuple[str, str]:
+    async def chat(
+        self,
+        message: str,
+        context: Optional[str] = None,
+        model_override: Optional[dict] = None,
+        has_document_context: bool = False,
+    ) -> tuple[str, str]:
         """
-        Send a message to the appropriate model based on privacy classification.
+        Route a message to the best model based on privacy + complexity.
 
-        Args:
-            message: The user's message
-            context: Optional context from knowledge base to include
-            model_override: Optional dict with 'model' and optionally 'system_prompt' and 'icon' for /model overrides
+        Routing order:
+        1. /model override → that model
+        2. S3 (private) → local Ollama  (indicator: "private")
+        3. Simple message → local Ollama (indicator: "simple")
+        4. Complex message → cloud       (indicator: "cloud")
+        5. Ollama unavailable → cloud fallback
 
         Returns:
-            Tuple of (response text, model indicator: "local", "cloud", or custom)
+            Tuple of (response text, model indicator)
         """
-        # If user has a model override, route directly to Ollama
+        # 1. Explicit /model override
         if model_override:
             ollama = get_ollama()
             if await ollama.is_available():
@@ -82,22 +90,38 @@ class GeminiService:
             else:
                 logger.warning("Model override requested but Ollama unavailable — falling back to default routing")
 
+        # 2. Privacy check — S3 must stay local
         privacy_level = classify_privacy(message)
-
         if privacy_level == "S3":
             ollama = get_ollama()
             if await ollama.is_available():
                 logger.info("🔒 Using local model (private)")
                 response = await ollama.chat(message, context=context or "")
-                return response, "local"
+                return response, "private"
             else:
-                logger.warning("🔒 Message is private but Ollama unavailable — falling back to Gemini")
+                logger.warning("🔒 Message is private but Ollama unavailable — falling back to cloud")
 
-        # Try OpenRouter first for S1 messages
+        # 3 & 4. Complexity-based routing
+        complexity = classify_complexity(message, has_document_context)
+
+        if complexity == "simple":
+            ollama = get_ollama()
+            if await ollama.is_available():
+                logger.info("🏠 Using local model (simple)")
+                response = await ollama.chat(message, context=context or "")
+                return response, "simple"
+            else:
+                logger.info("🏠 Simple message but Ollama unavailable — falling back to cloud")
+
+        # Complex or Ollama unavailable → cloud
+        return await self._cloud_chat(message, context)
+
+    async def _cloud_chat(self, message: str, context: Optional[str] = None) -> tuple[str, str]:
+        """Send to cloud: OpenRouter first, Gemini as fallback."""
         openrouter = get_openrouter()
         if openrouter.is_available():
             try:
-                logger.info("☁️ Using OpenRouter (qwen3.6-plus)")
+                logger.info("☁️ Using OpenRouter (cloud)")
                 response = await openrouter.chat(message, context=context or "")
                 return response, "cloud"
             except Exception as e:

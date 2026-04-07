@@ -686,12 +686,25 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         gemini = get_gemini()
         chat_id = update.effective_chat.id
         model_override = user_model_overrides.get(chat_id)
-        response, model_used = await gemini.chat(message, context=context_str, model_override=model_override)
+        has_doc_context = any(
+            item["source_type"] == "document" for item in search_result["results"]
+        )
+        response, model_used = await gemini.chat(
+            message,
+            context=context_str,
+            model_override=model_override,
+            has_document_context=has_doc_context,
+        )
 
+        MODEL_ICONS = {
+            "private": "🔒",
+            "simple": "🏠",
+            "cloud": "☁️",
+        }
         if model_override:
             model_icon = model_override.get("icon", "🔒")
         else:
-            model_icon = "🔒" if model_used == "local" else "☁️"
+            model_icon = MODEL_ICONS.get(model_used, "☁️")
         await update.message.reply_text(f"{model_icon} {response}")
         logger.info(f"AI response sent (model: {model_used}, with context: {bool(context_str)})")
 
