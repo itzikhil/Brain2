@@ -112,14 +112,19 @@ def _search_sync(query: str, n_results: int) -> str:
     dists = results["distances"][0]
 
     if not docs:
+        logger.info("MemPalace search: no results")
         return ""
+
+    logger.info(f"MemPalace search: {len(docs)} results, distances: {[round(d, 3) for d in dists]}")
 
     parts = []
     for doc, dist in zip(docs, dists):
-        similarity = round(1 - dist, 2)
-        if similarity < 0.3:
+        # ChromaDB returns distances (lower = better match).
+        # Keep results with distance < 1.5; skip poor matches.
+        if dist > 1.5:
             continue
-        parts.append(f"[Memory, relevance: {similarity}]\n{doc[:400]}")
+        relevance = round(max(0, 1 - dist), 2) if dist >= 0 else round(min(1, abs(dist)), 2)
+        parts.append(f"[Memory, relevance: {relevance}]\n{doc[:400]}")
 
     if not parts:
         return ""
