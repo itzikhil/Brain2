@@ -99,12 +99,18 @@ async def _get_exchange_rates() -> str:
 
 
 async def _get_motivation() -> str:
-    """Get a motivational one-liner from the AI model."""
+    """Get a personal, witty morning one-liner from the AI model."""
+    now = datetime.now(BERLIN_TZ)
+    day_name = now.strftime("%A")
+
     try:
         gemini = get_gemini()
         response, _ = await gemini.chat(
-            "Give me a short motivational one-liner for the morning. "
-            "Just the quote, no attribution, no quotation marks, max 15 words."
+            f"It's {day_name} morning. Generate a short, witty, personal motivational "
+            f"one-liner for Itzik to start his day. Be warm and funny — like a friend "
+            f"texting him, not a fortune cookie. Reference the day of the week if it's "
+            f"relevant (e.g. Monday blues, Friday energy, mid-week grind). "
+            f"Just the line, no quotes, no attribution, max 15 words."
         )
         return f"💪 {response.strip()}"
     except Exception as e:
