@@ -621,7 +621,7 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE, us
                     return
 
         # Detect reminder intent (before "remember" to avoid conflict)
-        reminder_keywords = ["remind me", "reminder", "set reminder", "תזכיר לי", "erinnere mich"]
+        reminder_keywords = ["remind me", "reminder", "set reminder", "תזכיר לי", "תזכור לי", "erinnere mich"]
         if any(kw in message.lower() for kw in reminder_keywords):
             parsed = parse_reminder(message)
             if parsed:
@@ -631,6 +631,9 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE, us
                 time_str = remind_at.strftime("%b %d, %H:%M")
                 await update.message.reply_text(f"⏰ Reminder set: {reminder_text} at {time_str}\n(#{rid})")
                 logger.info(f"Reminder #{rid} set for {remind_at}")
+                return
+            else:
+                await update.message.reply_text("⏰ When should I remind you? (e.g., 'in 2 hours', 'tomorrow at 9', 'at 5pm')")
                 return
 
         # Detect "remember" intent naturally
@@ -753,7 +756,7 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE, us
             palace_context = await search_memory(message)
             if palace_context:
                 if context_str:
-                    context_str = f"Past conversations:\n{palace_context}\n\nDocuments:\n{context_str}"
+                    context_str = f"Past conversations:\n{palace_context}\n\nSaved notes:\n{context_str}"
                 else:
                     context_str = f"Past conversations:\n{palace_context}"
                 logger.info("Injected MemPalace conversation memory into context")
