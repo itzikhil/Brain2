@@ -18,11 +18,23 @@ REMINDER_TRIGGERS = [
     r"set (?:a )?reminder\s+(?:to\s+)?(.+)",
 ]
 
+# Hebrew number words
+HEBREW_NUMBERS = {
+    "אחת": 1, "שתיים": 2, "שלוש": 3, "ארבע": 4, "חמש": 5,
+    "שש": 6, "שבע": 7, "שמונה": 8, "תשע": 9, "עשר": 10,
+    "רבע": 15, "חצי": 30,
+}
+
 # Time extraction patterns — order matters (most specific first)
 TIME_PATTERNS = [
     # "in X hours/minutes"
     (r"\bin\s+(\d+)\s*(hours?|h)\b", "delta_hours"),
     (r"\bin\s+(\d+)\s*(minutes?|mins?|m)\b", "delta_minutes"),
+    # Hebrew: "עוד X דקות/שעות" (in X minutes/hours)
+    (r"עוד\s+(\d+)\s*דקות", "delta_minutes"),
+    (r"עוד\s+(\d+)\s*שעות?", "delta_hours"),
+    (r"עוד\s+(\S+)\s*דקות", "delta_minutes_heb"),
+    (r"עוד\s+(\S+)\s*שעות?", "delta_hours_heb"),
     # "at HH:MM" or "at Hpm/am"
     (r"\bat\s+(\d{1,2}):(\d{2})\b", "at_hhmm"),
     (r"\bat\s+(\d{1,2})\s*(am|pm)\b", "at_hap"),
@@ -61,6 +73,7 @@ def _clean_reminder_text(text: str) -> str:
         r"\bon\s+\d{1,2}\.\d{1,2}\b",
         r"\btomorrow\b", r"\bמחר\b", r"\bmorgen\b",
         r"\btonight\b",
+        r"עוד\s+\S+\s*(דקות|שעות?)",
     ]
     for pat in remove_patterns:
         cleaned = re.sub(pat, "", cleaned, flags=re.IGNORECASE)
@@ -108,6 +121,14 @@ def parse_reminder(message: str) -> tuple[str, datetime] | None:
             remind_at = now + timedelta(hours=int(m.group(1)))
         elif time_type == "delta_minutes":
             remind_at = now + timedelta(minutes=int(m.group(1)))
+        elif time_type == "delta_hours_heb":
+            n = HEBREW_NUMBERS.get(m.group(1))
+            if n:
+                remind_at = now + timedelta(hours=n)
+        elif time_type == "delta_minutes_heb":
+            n = HEBREW_NUMBERS.get(m.group(1))
+            if n:
+                remind_at = now + timedelta(minutes=n)
         elif time_type == "at_hhmm":
             hour, minute = int(m.group(1)), int(m.group(2))
             remind_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)

@@ -48,16 +48,32 @@ async def add_reminder(chat_id: int, reminder_text: str, remind_at: datetime) ->
 async def get_pending_reminders() -> list[dict]:
     """Return all unfired reminders whose time has come."""
     async with get_db_context() as db:
+        # Use CURRENT_TIMESTAMP for comparison — both sides are tz-aware
         result = await db.execute(text("""
             SELECT id, chat_id, text, remind_at
             FROM reminders
-            WHERE fired = FALSE AND remind_at <= NOW()
+            WHERE fired = FALSE AND remind_at <= CURRENT_TIMESTAMP
             ORDER BY remind_at
         """))
-        return [
+        rows = result.fetchall()
+        pending = [
             {"id": r[0], "chat_id": r[1], "text": r[2], "remind_at": r[3]}
-            for r in result.fetchall()
+            for r in rows
         ]
+
+        if pending:
+            logger.info(f"Found {len(pending)} pending reminder(s)")
+        else:
+            # Log DB time vs earliest unfired reminder for debugging
+            ts_result = await db.execute(text(
+                "SELECT CURRENT_TIMESTAMP, "
+                "(SELECT MIN(remind_at) FROM reminders WHERE fired = FALSE)"
+            ))
+            row = ts_result.fetchone()
+            if row and row[1]:
+                logger.debug(f"No pending reminders. DB time={row[0]}, next={row[1]}")
+
+        return pending
 
 
 async def mark_fired(reminder_id: int):

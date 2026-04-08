@@ -37,6 +37,9 @@ async def _check_reminders(application):
     """Fire any pending reminders by sending Telegram messages."""
     try:
         pending = await get_pending_reminders()
+        if not pending:
+            return
+        logger.info(f"Firing {len(pending)} reminder(s)...")
         for reminder in pending:
             try:
                 await application.bot.send_message(
